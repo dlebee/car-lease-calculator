@@ -20,10 +20,12 @@ interface LeaseData {
   leaseTerm: number;
   ficoScore8: number; // FICO Score 8 (300-850)
   salesTaxPercent: number; // Sales tax percentage
-  acquisitionFee: number; // Acquisition fee
-  otherFees: number; // Other fees (registration, documentation, etc.)
+  tagTitleFilingFees: number; // Tag/title/filing fees
+  handlingFees: number; // Handling fees (includes acquisition fee)
+  otherFees: number; // Other miscellaneous fees
   downPayment: number; // Cash down payment
   equityTransfer: number; // Trade-in equity value
+  dueAtSigning: number; // Total amount due at signing (reduces cap cost)
 }
 
 interface SavedCars {
@@ -49,10 +51,12 @@ const createNewCar = (): LeaseData => ({
   leaseTerm: 36,
   ficoScore8: 0,
   salesTaxPercent: 0,
-  acquisitionFee: 700, // Default acquisition fee
+  tagTitleFilingFees: 0,
+  handlingFees: 700, // Default handling fee (includes acquisition fee)
   otherFees: 0,
   downPayment: 0,
   equityTransfer: 0,
+  dueAtSigning: 0,
 });
 
 export default function LeaseCalculator() {
@@ -108,14 +112,41 @@ export default function LeaseCalculator() {
             if (car.acquisitionFee === undefined) {
               updated = { ...updated, acquisitionFee: 700 };
             }
+            // Migrate to new simplified fee structure
+            if (car.tagTitleFilingFees === undefined) {
+              // Combine registration, title, filing fees
+              const registrationFee = car.registrationFee || 0;
+              const titleFee = car.titleFee || 0;
+              const licensePlateFee = car.licensePlateFee || 0;
+              const titleAndDealerFees = car.titleAndDealerFees || 0;
+              // If titleAndDealerFees exists, use it; otherwise sum individual fees
+              // For tag/title/filing, we'll estimate: registration + title parts
+              updated = { ...updated, tagTitleFilingFees: registrationFee + titleFee + licensePlateFee + (titleAndDealerFees * 0.6) };
+            }
+            if (car.handlingFees === undefined) {
+              // Combine acquisition fee, documentation and dealer handling fees
+              const acquisitionFee = car.acquisitionFee || 0;
+              const documentationFee = car.documentationFee || 0;
+              const dealerFee = car.dealerFee || 0;
+              const titleAndDealerFees = car.titleAndDealerFees || 0;
+              // If titleAndDealerFees exists, use dealer handling portion; otherwise sum
+              updated = { ...updated, handlingFees: acquisitionFee + documentationFee + dealerFee + (titleAndDealerFees * 0.4) };
+            }
             if (car.otherFees === undefined) {
-              updated = { ...updated, otherFees: 0 };
+              // Combine inspection, disposition, and other fees
+              const inspectionFee = car.inspectionFee || 0;
+              const dispositionFee = car.dispositionFee || 0;
+              const oldOtherFees = car.otherFees || 0;
+              updated = { ...updated, otherFees: inspectionFee + dispositionFee + oldOtherFees };
             }
             if (car.downPayment === undefined) {
               updated = { ...updated, downPayment: 0 };
             }
             if (car.equityTransfer === undefined) {
               updated = { ...updated, equityTransfer: 0 };
+            }
+            if (car.dueAtSigning === undefined) {
+              updated = { ...updated, dueAtSigning: 0 };
             }
             if (car.vin === undefined) {
               updated = { ...updated, vin: '' };
@@ -142,10 +173,26 @@ export default function LeaseCalculator() {
           const discountAmount = parsed.discountAmount !== undefined ? parsed.discountAmount : (parsed.msrp * discount) / 100;
           const ficoScore8 = parsed.ficoScore8 !== undefined ? parsed.ficoScore8 : 0;
           const salesTaxPercent = parsed.salesTaxPercent !== undefined ? parsed.salesTaxPercent : 0;
-          const acquisitionFee = parsed.acquisitionFee !== undefined ? parsed.acquisitionFee : 700;
-          const otherFees = parsed.otherFees !== undefined ? parsed.otherFees : 0;
+          // Migrate to new simplified fee structure
+          const acquisitionFee = parsed.acquisitionFee || 0;
+          const registrationFee = parsed.registrationFee || 0;
+          const titleFee = parsed.titleFee || 0;
+          const licensePlateFee = parsed.licensePlateFee || 0;
+          const titleAndDealerFees = parsed.titleAndDealerFees || 0;
+          const tagTitleFilingFees = parsed.tagTitleFilingFees !== undefined ? parsed.tagTitleFilingFees :
+            (registrationFee + titleFee + licensePlateFee + (titleAndDealerFees * 0.6));
+          const documentationFee = parsed.documentationFee || 0;
+          const dealerFee = parsed.dealerFee || 0;
+          const handlingFees = parsed.handlingFees !== undefined ? parsed.handlingFees :
+            (acquisitionFee + documentationFee + dealerFee + (titleAndDealerFees * 0.4));
+          const inspectionFee = parsed.inspectionFee || 0;
+          const dispositionFee = parsed.dispositionFee || 0;
+          const oldOtherFees = parsed.otherFees || 0;
+          const otherFees = parsed.otherFees !== undefined && parsed.inspectionFee === undefined && parsed.dispositionFee === undefined ? parsed.otherFees :
+            (inspectionFee + dispositionFee + oldOtherFees);
           const downPayment = parsed.downPayment !== undefined ? parsed.downPayment : 0;
           const equityTransfer = parsed.equityTransfer !== undefined ? parsed.equityTransfer : 0;
+          const dueAtSigning = parsed.dueAtSigning !== undefined ? parsed.dueAtSigning : 0;
           const vin = parsed.vin !== undefined ? parsed.vin : '';
           const migratedCar = { 
             ...parsed, 
@@ -154,10 +201,12 @@ export default function LeaseCalculator() {
             discountAmount, 
             ficoScore8,
             salesTaxPercent,
-            acquisitionFee,
+            tagTitleFilingFees,
+            handlingFees,
             otherFees,
             downPayment,
             equityTransfer,
+            dueAtSigning,
             vin,
           };
           const newSavedCars = {
@@ -484,99 +533,18 @@ export default function LeaseCalculator() {
           }
         });
         
-        // Try to fetch pricing information from free APIs
-        let msrp = '';
-        let medianPrice = '';
-        const searchQuery = `${modelYear} ${make} ${model} ${trim}`.trim();
-        
-        // Try to fetch pricing using multiple methods
-        try {
-          // Method 1: Try using a CORS proxy to fetch from public APIs
-          // Note: Most pricing APIs require API keys, but we'll try public endpoints
-          const proxyUrl = 'https://api.allorigins.win/get?url=';
-          
-          // Try fetching from Edmunds public API (may require API key)
-          try {
-            const makeSlug = make.toLowerCase().replace(/\s+/g, '-');
-            const modelSlug = model.toLowerCase().replace(/\s+/g, '-');
-            const edmundsApiUrl = `https://api.edmunds.com/api/vehicle/v2/${makeSlug}/${modelSlug}/${modelYear}?fmt=json&api_key=demo`;
-            const proxyRequest = `${proxyUrl}${encodeURIComponent(edmundsApiUrl)}`;
-            
-            const pricingResponse = await Promise.race([
-              fetch(proxyRequest, { 
-                method: 'GET',
-                headers: { 'Accept': 'application/json' }
-              }),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-            ]);
-            
-            if (pricingResponse.ok) {
-              const pricingData = await pricingResponse.json();
-              if (pricingData.contents) {
-                try {
-                  const parsed = JSON.parse(pricingData.contents);
-                  // Try to extract MSRP from various possible fields
-                  if (parsed.msrp && parsed.msrp.baseMSRP) {
-                    msrp = `$${parseInt(parsed.msrp.baseMSRP).toLocaleString()}`;
-                  } else if (parsed.price && parsed.price.baseMSRP) {
-                    msrp = `$${parseInt(parsed.price.baseMSRP).toLocaleString()}`;
-                  }
-                  
-                  // Try to extract TMV (True Market Value) / median price
-                  if (parsed.tmv && parsed.tmv.nationalBasePrice) {
-                    medianPrice = `$${parseInt(parsed.tmv.nationalBasePrice).toLocaleString()}`;
-                  } else if (parsed.price && parsed.price.tmv) {
-                    medianPrice = `$${parseInt(parsed.price.tmv).toLocaleString()}`;
-                  }
-                } catch (parseError) {
-                  console.log('Failed to parse pricing data:', parseError);
-                }
-              }
-            }
-          } catch (edmundsError) {
-            console.log('Edmunds API fetch failed:', edmundsError);
-          }
-          
-          // Method 2: Try alternative free API endpoints
-          if (!msrp || !medianPrice) {
-            try {
-              // Try a different approach - use VIN-based lookup if available
-              // Most free APIs don't provide pricing without API keys
-              // This is a placeholder for when a free API becomes available
-            } catch (altError) {
-              console.log('Alternative API fetch failed:', altError);
-            }
-          }
-          
-        } catch (pricingError) {
-          console.log('Overall pricing fetch error:', pricingError);
-        }
-        
         // Add pricing information to formatted data
+        const searchQuery = `${modelYear} ${make} ${model} ${trim}`.trim();
         formattedData.push('');
         formattedData.push('=== PRICING INFORMATION ===');
-        if (msrp) {
-          formattedData.push(`MSRP: ${msrp} ✓ (from API)`);
-        } else {
-          formattedData.push('MSRP: [Not available via free API - requires API key]');
-        }
-        
-        if (medianPrice) {
-          formattedData.push(`Median Dealership Sold Price: ${medianPrice} ✓ (from API)`);
-        } else {
-          formattedData.push('Median Dealership Sold Price: [Not available via free API - requires API key]');
-        }
-        
+        formattedData.push('MSRP: [Enter manually or check manufacturer website/window sticker]');
+        formattedData.push('Median Dealership Sold Price: [Check pricing websites below]');
         formattedData.push('');
-        formattedData.push('💡 To get accurate pricing, use these sources:');
+        formattedData.push('💡 To find MSRP and median sold price, check these sources:');
+        formattedData.push(`   • Manufacturer website or window sticker`);
         formattedData.push(`   • Edmunds TMV: https://www.edmunds.com/tmv.html (Search: ${searchQuery})`);
         formattedData.push(`   • KBB Price Advisor: https://www.kbb.com/priceadvisor/ (Search: ${searchQuery})`);
         formattedData.push(`   • CarGurus: Search for ${searchQuery}`);
-        formattedData.push('');
-        formattedData.push('Note: Most pricing APIs require API keys. To enable automatic pricing:');
-        formattedData.push('   1. Sign up for Edmunds API (developer.edmunds.com)');
-        formattedData.push('   2. Add your API key to the application');
-        formattedData.push('   3. Pricing will be fetched automatically');
         
         const formattedText = formattedData.join('\n');
         setVinData(formattedText);
@@ -776,13 +744,16 @@ export default function LeaseCalculator() {
     // Base cap cost after discount
     const baseCapCost = data.msrp * (1 - (data.discount || 0) / 100);
     
-    // Add fees to cap cost
-    const totalFees = (data.acquisitionFee || 0) + (data.otherFees || 0);
+    // Add all fees to cap cost
+    const totalFees = 
+      (data.tagTitleFilingFees || 0) +
+      (data.handlingFees || 0) +
+      (data.otherFees || 0);
     
-    // Subtract down payment and equity transfer
-    const totalDownPayment = (data.downPayment || 0) + (data.equityTransfer || 0);
+    // Subtract down payment, equity transfer, and due at signing
+    const totalDownPayment = (data.downPayment || 0) + (data.equityTransfer || 0) + (data.dueAtSigning || 0);
     
-    // Adjusted cap cost (base + fees - down payment/equity)
+    // Adjusted cap cost (base + fees - down payment/equity/due at signing)
     const adjustedCapCost = baseCapCost + totalFees - totalDownPayment;
     
     const residualValue = (data.msrp * data.residualPercent) / 100;
@@ -1104,6 +1075,23 @@ export default function LeaseCalculator() {
             />
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
               Trade-in equity value applied to lease
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Due at Signing ($)
+            </label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={data.dueAtSigning || ''}
+              onChange={(e) => handleInputChange('dueAtSigning', parseFloat(e.target.value) || 0)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              placeholder="e.g., 3000"
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              Total amount due at signing (reduces monthly payment)
             </p>
           </div>
         </div>
@@ -1655,19 +1643,36 @@ export default function LeaseCalculator() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Acquisition Fee ($)
+                    Tag/Title/Filing Fees ($)
                   </label>
                   <input
                     type="number"
                     min="0"
                     step="0.01"
-                    value={data.acquisitionFee || ''}
-                    onChange={(e) => handleInputChange('acquisitionFee', parseFloat(e.target.value) || 0)}
+                    value={data.tagTitleFilingFees || ''}
+                    onChange={(e) => handleInputChange('tagTitleFilingFees', parseFloat(e.target.value) || 0)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                    placeholder="e.g., 300"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Tag, title, and filing fees
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Handling Fees ($)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={data.handlingFees || ''}
+                    onChange={(e) => handleInputChange('handlingFees', parseFloat(e.target.value) || 0)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                     placeholder="e.g., 700"
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Typical acquisition fee is $700
+                    Handling fees (includes acquisition fee, typically $700)
                   </p>
                 </div>
                 <div>
@@ -1681,10 +1686,10 @@ export default function LeaseCalculator() {
                     value={data.otherFees || ''}
                     onChange={(e) => handleInputChange('otherFees', parseFloat(e.target.value) || 0)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                    placeholder="e.g., 500"
+                    placeholder="e.g., 200"
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Registration, documentation, dealer fees, etc.
+                    Any other miscellaneous fees
                   </p>
                 </div>
               </div>
@@ -1692,9 +1697,15 @@ export default function LeaseCalculator() {
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">Total Fees Summary</h3>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span className="text-gray-600 dark:text-gray-400">Acquisition Fee:</span>
+                    <span className="text-gray-600 dark:text-gray-400">Tag/Title/Filing Fees:</span>
                     <span className="font-medium text-gray-900 dark:text-white">
-                      ${(data.acquisitionFee || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      ${(data.tagTitleFilingFees || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">Handling Fees:</span>
+                    <span className="font-medium text-gray-900 dark:text-white">
+                      ${(data.handlingFees || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -1706,7 +1717,7 @@ export default function LeaseCalculator() {
                   <div className="flex justify-between pt-2 border-t border-gray-300 dark:border-gray-600 font-semibold">
                     <span className="text-gray-900 dark:text-white">Total Fees:</span>
                     <span className="text-gray-900 dark:text-white">
-                      ${((data.acquisitionFee || 0) + (data.otherFees || 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      ${paymentData.totalFees.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                 </div>
@@ -1782,15 +1793,9 @@ export default function LeaseCalculator() {
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-600 dark:text-gray-400">Acquisition Fee:</span>
+                    <span className="text-gray-600 dark:text-gray-400">Total Fees:</span>
                     <span className="font-medium text-gray-900 dark:text-white">
-                      ${(data.acquisitionFee || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600 dark:text-gray-400">Other Fees:</span>
-                    <span className="font-medium text-gray-900 dark:text-white">
-                      ${(data.otherFees || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      ${paymentData.totalFees.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -1803,6 +1808,12 @@ export default function LeaseCalculator() {
                     <span className="text-gray-600 dark:text-gray-400">Equity Transfer:</span>
                     <span className="font-medium text-gray-900 dark:text-white">
                       ${(data.equityTransfer || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">Due at Signing:</span>
+                    <span className="font-medium text-gray-900 dark:text-white">
+                      ${(data.dueAtSigning || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div className="flex justify-between font-semibold pt-2 border-t border-gray-300 dark:border-gray-600">
@@ -1923,21 +1934,58 @@ export default function LeaseCalculator() {
                     </span>
                   </div>
                   <div className="pt-2 border-t border-gray-300 dark:border-gray-600">
-                    <div className="grid grid-cols-2 gap-4">
-                      {data.leaseTerm > 12 && (
-                        <div className="flex flex-col">
-                          <span className="text-gray-600 dark:text-gray-400 text-sm">Remaining {data.leaseTerm - 12} months:</span>
-                          <span className="font-semibold text-gray-900 dark:text-white">
-                            ${((paymentData.rates.find(r => Math.abs(r.apr - paymentData.currentApr) < 0.01)?.totalMonthlyPayment || 0) * (data.leaseTerm - 12)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </span>
-                        </div>
-                      )}
-                      <div className={`flex flex-col ${data.leaseTerm <= 12 ? 'col-span-2' : ''}`}>
-                        <span className="text-gray-600 dark:text-gray-400 text-sm">Annual Payment (12 months):</span>
-                        <span className="font-semibold text-gray-900 dark:text-white">
-                          ${((paymentData.rates.find(r => Math.abs(r.apr - paymentData.currentApr) < 0.01)?.totalMonthlyPayment || 0) * 12).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </span>
-                      </div>
+                    <div className="space-y-2">
+                      {(() => {
+                        const monthlyPayment = paymentData.rates.find(r => Math.abs(r.apr - paymentData.currentApr) < 0.01)?.totalMonthlyPayment || 0;
+                        const leaseTerm = data.leaseTerm;
+                        const periods: Array<{ label: string; months: number; total: number }> = [];
+                        
+                        // First 12 months
+                        periods.push({
+                          label: 'First 12 months',
+                          months: Math.min(12, leaseTerm),
+                          total: monthlyPayment * Math.min(12, leaseTerm)
+                        });
+                        
+                        // Second 12 months (if lease > 12 months)
+                        if (leaseTerm > 12) {
+                          periods.push({
+                            label: 'Second 12 months',
+                            months: Math.min(12, leaseTerm - 12),
+                            total: monthlyPayment * Math.min(12, leaseTerm - 12)
+                          });
+                        }
+                        
+                        // Third 12 months (if lease > 24 months)
+                        if (leaseTerm > 24) {
+                          periods.push({
+                            label: 'Third 12 months',
+                            months: Math.min(12, leaseTerm - 24),
+                            total: monthlyPayment * Math.min(12, leaseTerm - 24)
+                          });
+                        }
+                        
+                        // Remaining months (if lease is not a multiple of 12)
+                        const remainingMonths = leaseTerm % 12;
+                        if (remainingMonths > 0 && leaseTerm > 12) {
+                          periods.push({
+                            label: `Remaining ${remainingMonths} month${remainingMonths > 1 ? 's' : ''}`,
+                            months: remainingMonths,
+                            total: monthlyPayment * remainingMonths
+                          });
+                        }
+                        
+                        return periods.map((period, index) => (
+                          <div key={index} className="flex justify-between items-center">
+                            <span className="text-gray-600 dark:text-gray-400 text-sm">
+                              {period.label}:
+                            </span>
+                            <span className="font-semibold text-gray-900 dark:text-white">
+                              ${period.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        ));
+                      })()}
                     </div>
                   </div>
                 </div>
