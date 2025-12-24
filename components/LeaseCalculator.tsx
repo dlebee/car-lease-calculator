@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { marked } from 'marked';
 
 interface LeaseData {
   id: string;
@@ -26,6 +27,19 @@ interface LeaseData {
   downPayment: number; // Cash down payment
   equityTransfer: number; // Trade-in equity value
   dueAtSigning: number; // Total amount due at signing (reduces cap cost)
+}
+
+// Legacy data structure for migration purposes - contains old fee fields that may exist in saved data
+interface LegacyLeaseData extends Partial<LeaseData> {
+  acquisitionFee?: number;
+  registrationFee?: number;
+  titleFee?: number;
+  licensePlateFee?: number;
+  titleAndDealerFees?: number;
+  documentationFee?: number;
+  dealerFee?: number;
+  inspectionFee?: number;
+  dispositionFee?: number;
 }
 
 interface SavedCars {
@@ -109,34 +123,35 @@ export default function LeaseCalculator() {
             if (car.salesTaxPercent === undefined) {
               updated = { ...updated, salesTaxPercent: 0 };
             }
-            if (car.acquisitionFee === undefined) {
-              updated = { ...updated, acquisitionFee: 700 };
-            }
             // Migrate to new simplified fee structure
             if (car.tagTitleFilingFees === undefined) {
               // Combine registration, title, filing fees
-              const registrationFee = car.registrationFee || 0;
-              const titleFee = car.titleFee || 0;
-              const licensePlateFee = car.licensePlateFee || 0;
-              const titleAndDealerFees = car.titleAndDealerFees || 0;
+              const legacyCar = car as LegacyLeaseData;
+              const registrationFee = legacyCar.registrationFee || 0;
+              const titleFee = legacyCar.titleFee || 0;
+              const licensePlateFee = legacyCar.licensePlateFee || 0;
+              const titleAndDealerFees = legacyCar.titleAndDealerFees || 0;
               // If titleAndDealerFees exists, use it; otherwise sum individual fees
               // For tag/title/filing, we'll estimate: registration + title parts
               updated = { ...updated, tagTitleFilingFees: registrationFee + titleFee + licensePlateFee + (titleAndDealerFees * 0.6) };
             }
             if (car.handlingFees === undefined) {
-              // Combine acquisition fee, documentation and dealer handling fees
-              const acquisitionFee = car.acquisitionFee || 0;
-              const documentationFee = car.documentationFee || 0;
-              const dealerFee = car.dealerFee || 0;
-              const titleAndDealerFees = car.titleAndDealerFees || 0;
-              // If titleAndDealerFees exists, use dealer handling portion; otherwise sum
-              updated = { ...updated, handlingFees: acquisitionFee + documentationFee + dealerFee + (titleAndDealerFees * 0.4) };
+              // Combine acquisition fee (from old data), documentation and dealer handling fees
+              const legacyCar = car as LegacyLeaseData;
+              const acquisitionFee = legacyCar.acquisitionFee || 0;
+              const documentationFee = legacyCar.documentationFee || 0;
+              const dealerFee = legacyCar.dealerFee || 0;
+              const titleAndDealerFees = legacyCar.titleAndDealerFees || 0;
+              // Default to 700 if no old fees exist, otherwise combine them
+              const defaultHandlingFees = acquisitionFee + documentationFee + dealerFee + (titleAndDealerFees * 0.4);
+              updated = { ...updated, handlingFees: defaultHandlingFees > 0 ? defaultHandlingFees : 700 };
             }
             if (car.otherFees === undefined) {
               // Combine inspection, disposition, and other fees
-              const inspectionFee = car.inspectionFee || 0;
-              const dispositionFee = car.dispositionFee || 0;
-              const oldOtherFees = car.otherFees || 0;
+              const legacyCar = car as LegacyLeaseData;
+              const inspectionFee = legacyCar.inspectionFee || 0;
+              const dispositionFee = legacyCar.dispositionFee || 0;
+              const oldOtherFees = legacyCar.otherFees || 0;
               updated = { ...updated, otherFees: inspectionFee + dispositionFee + oldOtherFees };
             }
             if (car.downPayment === undefined) {
@@ -174,21 +189,22 @@ export default function LeaseCalculator() {
           const ficoScore8 = parsed.ficoScore8 !== undefined ? parsed.ficoScore8 : 0;
           const salesTaxPercent = parsed.salesTaxPercent !== undefined ? parsed.salesTaxPercent : 0;
           // Migrate to new simplified fee structure
-          const acquisitionFee = parsed.acquisitionFee || 0;
-          const registrationFee = parsed.registrationFee || 0;
-          const titleFee = parsed.titleFee || 0;
-          const licensePlateFee = parsed.licensePlateFee || 0;
-          const titleAndDealerFees = parsed.titleAndDealerFees || 0;
+          const legacyParsed = parsed as LegacyLeaseData;
+          const acquisitionFee = legacyParsed.acquisitionFee || 0;
+          const registrationFee = legacyParsed.registrationFee || 0;
+          const titleFee = legacyParsed.titleFee || 0;
+          const licensePlateFee = legacyParsed.licensePlateFee || 0;
+          const titleAndDealerFees = legacyParsed.titleAndDealerFees || 0;
           const tagTitleFilingFees = parsed.tagTitleFilingFees !== undefined ? parsed.tagTitleFilingFees :
             (registrationFee + titleFee + licensePlateFee + (titleAndDealerFees * 0.6));
-          const documentationFee = parsed.documentationFee || 0;
-          const dealerFee = parsed.dealerFee || 0;
+          const documentationFee = legacyParsed.documentationFee || 0;
+          const dealerFee = legacyParsed.dealerFee || 0;
           const handlingFees = parsed.handlingFees !== undefined ? parsed.handlingFees :
-            (acquisitionFee + documentationFee + dealerFee + (titleAndDealerFees * 0.4));
-          const inspectionFee = parsed.inspectionFee || 0;
-          const dispositionFee = parsed.dispositionFee || 0;
+            (acquisitionFee + documentationFee + dealerFee + (titleAndDealerFees * 0.4) || 700);
+          const inspectionFee = legacyParsed.inspectionFee || 0;
+          const dispositionFee = legacyParsed.dispositionFee || 0;
           const oldOtherFees = parsed.otherFees || 0;
-          const otherFees = parsed.otherFees !== undefined && parsed.inspectionFee === undefined && parsed.dispositionFee === undefined ? parsed.otherFees :
+          const otherFees = parsed.otherFees !== undefined && legacyParsed.inspectionFee === undefined && legacyParsed.dispositionFee === undefined ? parsed.otherFees :
             (inspectionFee + dispositionFee + oldOtherFees);
           const downPayment = parsed.downPayment !== undefined ? parsed.downPayment : 0;
           const equityTransfer = parsed.equityTransfer !== undefined ? parsed.equityTransfer : 0;
@@ -375,6 +391,158 @@ export default function LeaseCalculator() {
     input.click();
   };
 
+  // Generate markdown from lease data - moved after paymentData calculation
+  const generateMarkdownSummary = (): string => {
+    const carName = getCarDisplayName(data);
+    const currentRate = paymentData.rates.find(r => Math.abs(r.apr - paymentData.currentApr) < 0.01);
+    const monthlyPayment = currentRate?.totalMonthlyPayment || 0;
+    
+    const formatCurrency = (amount: number) => 
+      `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    
+    const formatPercent = (value: number) => `${value.toFixed(2)}%`;
+    
+    let markdown = `# Lease Summary: ${carName}\n\n`;
+    markdown += `**Generated:** ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}\n\n`;
+    markdown += `---\n\n`;
+    
+    // Vehicle Information
+    markdown += `## Vehicle Information\n\n`;
+    markdown += `| Field | Value |\n`;
+    markdown += `|-------|-------|\n`;
+    markdown += `| Make | ${data.carMake || 'N/A'} |\n`;
+    markdown += `| Model | ${data.carModel || 'N/A'} |\n`;
+    markdown += `| Tier | ${data.carTier || 'N/A'} |\n`;
+    if (data.vin) {
+      markdown += `| VIN | ${data.vin} |\n`;
+    }
+    markdown += `| MSRP | ${formatCurrency(data.msrp)} |\n\n`;
+    
+    // Lease Terms
+    markdown += `## Lease Terms\n\n`;
+    markdown += `| Item | Value |\n`;
+    markdown += `|------|-------|\n`;
+    markdown += `| Lease Term | ${data.leaseTerm} months |\n`;
+    markdown += `| Discount | ${data.discount ? `-${data.discount.toFixed(1)}%` : '0%'} |\n`;
+    markdown += `| Base Cap Cost | ${formatCurrency(paymentData.baseCapCost)} (${data.capCostPercent.toFixed(1)}%) |\n`;
+    markdown += `| Residual Value | ${formatCurrency(paymentData.residualValue)} (${data.residualPercent}%) |\n`;
+    markdown += `| Depreciation | ${formatCurrency(paymentData.depreciation)} |\n`;
+    markdown += `| APR | ${paymentData.currentApr > 0 ? formatPercent(paymentData.currentApr) : 'N/A'} |\n`;
+    if (data.marketFactor > 0) {
+      markdown += `| Money Factor | ${data.marketFactor.toFixed(4)} |\n`;
+    }
+    if (data.salesTaxPercent > 0) {
+      markdown += `| Sales Tax | ${formatPercent(data.salesTaxPercent)} |\n`;
+    }
+    if (data.ficoScore8 > 0) {
+      markdown += `| FICO Score 8 | ${data.ficoScore8} (${getFicoRecommendations().tier}) |\n`;
+    }
+    markdown += `\n`;
+    
+    // Fees & Payments
+    markdown += `## Fees & Payments\n\n`;
+    markdown += `| Fee Type | Amount |\n`;
+    markdown += `|----------|--------|\n`;
+    markdown += `| Tag/Title/Filing Fees | ${formatCurrency(data.tagTitleFilingFees || 0)} |\n`;
+    markdown += `| Handling Fees | ${formatCurrency(data.handlingFees || 0)} |\n`;
+    markdown += `| Other Fees | ${formatCurrency(data.otherFees || 0)} |\n`;
+    markdown += `| **Total Fees** | **${formatCurrency(paymentData.totalFees)}** |\n`;
+    markdown += `\n`;
+    
+    markdown += `| Payment Type | Amount |\n`;
+    markdown += `|--------------|--------|\n`;
+    markdown += `| Down Payment | ${formatCurrency(data.downPayment || 0)} |\n`;
+    markdown += `| Equity Transfer | ${formatCurrency(data.equityTransfer || 0)} |\n`;
+    markdown += `| Due at Signing | ${formatCurrency(data.dueAtSigning || 0)} |\n`;
+    markdown += `| **Total Down Payment** | **${formatCurrency(paymentData.totalDownPayment)}** |\n`;
+    markdown += `| **Adjusted Cap Cost** | **${formatCurrency(paymentData.adjustedCapCost)}** |\n`;
+    markdown += `\n`;
+    
+    // Monthly Payment Breakdown
+    if (currentRate) {
+      markdown += `## Monthly Payment Breakdown\n\n`;
+      markdown += `| Component | Amount |\n`;
+      markdown += `|-----------|--------|\n`;
+      markdown += `| Monthly Depreciation | ${formatCurrency(currentRate.monthlyDepreciation)} |\n`;
+      markdown += `| Monthly Finance Charge | ${formatCurrency(currentRate.monthlyFinanceCharge)} |\n`;
+      markdown += `| Base Monthly Payment | ${formatCurrency(currentRate.baseMonthlyPayment)} |\n`;
+      if (data.salesTaxPercent > 0) {
+        const salesTaxAmount = currentRate.baseMonthlyPayment * (data.salesTaxPercent / 100);
+        markdown += `| Sales Tax (${formatPercent(data.salesTaxPercent)}) | ${formatCurrency(salesTaxAmount)} |\n`;
+      }
+      markdown += `| **Total Monthly Payment** | **${formatCurrency(currentRate.totalMonthlyPayment)}** |\n`;
+      markdown += `\n`;
+      
+      // Payment Schedule
+      const leaseTerm = data.leaseTerm;
+      markdown += `## Payment Schedule\n\n`;
+      const periods: Array<{ label: string; months: number; total: number }> = [];
+      
+      // First 12 months
+      periods.push({
+        label: 'First 12 months',
+        months: Math.min(12, leaseTerm),
+        total: monthlyPayment * Math.min(12, leaseTerm)
+      });
+      
+      // Second 12 months (if lease > 12 months)
+      if (leaseTerm > 12) {
+        periods.push({
+          label: 'Second 12 months',
+          months: Math.min(12, leaseTerm - 12),
+          total: monthlyPayment * Math.min(12, leaseTerm - 12)
+        });
+      }
+      
+      // Third 12 months (if lease > 24 months)
+      if (leaseTerm > 24) {
+        periods.push({
+          label: 'Third 12 months',
+          months: Math.min(12, leaseTerm - 24),
+          total: monthlyPayment * Math.min(12, leaseTerm - 24)
+        });
+      }
+      
+      // Remaining months (if lease is not a multiple of 12)
+      const remainingMonths = leaseTerm % 12;
+      if (remainingMonths > 0 && leaseTerm > 12) {
+        periods.push({
+          label: `Remaining ${remainingMonths} month${remainingMonths > 1 ? 's' : ''}`,
+          months: remainingMonths,
+          total: monthlyPayment * remainingMonths
+        });
+      }
+      
+      markdown += `| Period | Months | Total Payment |\n`;
+      markdown += `|--------|--------|---------------|\n`;
+      periods.forEach(period => {
+        markdown += `| ${period.label} | ${period.months} | ${formatCurrency(period.total)} |\n`;
+      });
+      markdown += `| **Total Lease Cost** | **${leaseTerm}** | **${formatCurrency(monthlyPayment * leaseTerm)}** |\n`;
+      markdown += `\n`;
+    }
+    
+    // FICO Recommendations
+    if (data.ficoScore8 > 0) {
+      const ficoRec = getFicoRecommendations();
+      markdown += `## Credit Score Recommendations\n\n`;
+      markdown += `**Credit Tier:** ${ficoRec.tier} (${data.ficoScore8})\n\n`;
+      markdown += `**Approval Likelihood:** ${ficoRec.approvalLikelihood}\n\n`;
+      markdown += `**Expected APR Range:** ${ficoRec.expectedAprRange}\n\n`;
+      markdown += `**Expected Money Factor Range:** ${ficoRec.expectedMoneyFactorRange}\n\n`;
+      markdown += `### Recommendations\n\n`;
+      ficoRec.recommendations.forEach(rec => {
+        markdown += `- ${rec}\n`;
+      });
+      markdown += `\n`;
+    }
+    
+    markdown += `---\n\n`;
+    markdown += `*This document was generated by Car Lease Calculator*\n`;
+    
+    return markdown;
+  };
+
   const handleExportPDF = async () => {
     if (!summaryRef.current) {
       alert('Please expand Step 5: Complete Summary to export PDF');
@@ -385,46 +553,120 @@ export default function LeaseCalculator() {
       // Ensure the summary section is expanded
       if (!expandedSteps.step5) {
         setExpandedSteps((prev) => ({ ...prev, step5: true }));
-        // Wait a bit for the DOM to update
-        await new Promise(resolve => setTimeout(resolve, 300));
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
 
       const element = summaryRef.current;
+      
+      if (!element || element.offsetHeight === 0) {
+        alert('Summary section is not visible. Please ensure Step 5 is expanded.');
+        return;
+      }
+
+      // Scroll element into view
+      element.scrollIntoView({ behavior: 'instant', block: 'start' });
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      // Capture the Step 5 summary element directly
       const canvas = await html2canvas(element, {
         scale: 2,
         useCORS: true,
+        allowTaint: true,
         backgroundColor: '#ffffff',
         logging: false,
+        width: element.scrollWidth,
+        height: element.scrollHeight,
+        windowWidth: element.scrollWidth,
+        windowHeight: element.scrollHeight,
+        scrollX: 0,
+        scrollY: 0,
+        onclone: (clonedDoc) => {
+          // Inject CSS to ensure colors are RGB and improve styling
+          const style = clonedDoc.createElement('style');
+          style.textContent = `
+            * {
+              color: rgb(17, 24, 39) !important;
+            }
+            .bg-white { background-color: rgb(255, 255, 255) !important; }
+            .bg-gray-50 { background-color: rgb(249, 250, 251) !important; }
+            .bg-gray-100 { background-color: rgb(243, 244, 246) !important; }
+            .bg-gray-700 { background-color: rgb(55, 65, 81) !important; }
+            .bg-gray-800 { background-color: rgb(31, 41, 55) !important; }
+            .bg-blue-50 { background-color: rgb(239, 246, 255) !important; }
+            .bg-blue-100 { background-color: rgb(219, 234, 254) !important; }
+            .bg-green-50 { background-color: rgb(240, 253, 244) !important; }
+            .bg-yellow-50 { background-color: rgb(254, 252, 232) !important; }
+            .bg-orange-50 { background-color: rgb(255, 247, 237) !important; }
+            .bg-red-50 { background-color: rgb(254, 242, 242) !important; }
+            .text-gray-900 { color: rgb(17, 24, 39) !important; }
+            .text-gray-600 { color: rgb(75, 85, 99) !important; }
+            .text-gray-500 { color: rgb(107, 114, 128) !important; }
+            .text-gray-400 { color: rgb(156, 163, 175) !important; }
+            .text-white { color: rgb(255, 255, 255) !important; }
+            .text-blue-600 { color: rgb(37, 99, 235) !important; }
+            .text-blue-400 { color: rgb(96, 165, 250) !important; }
+            .text-green-600 { color: rgb(22, 163, 74) !important; }
+            .border-gray-300 { border-color: rgb(209, 213, 219) !important; }
+            .border-gray-600 { border-color: rgb(75, 85, 99) !important; }
+            .border-gray-700 { border-color: rgb(55, 65, 81) !important; }
+            .border-green-300 { border-color: rgb(134, 239, 172) !important; }
+            .border-green-700 { border-color: rgb(21, 128, 61) !important; }
+            .border-blue-300 { border-color: rgb(147, 197, 253) !important; }
+            .border-blue-700 { border-color: rgb(29, 78, 216) !important; }
+            .border-yellow-300 { border-color: rgb(253, 224, 71) !important; }
+            .border-yellow-700 { border-color: rgb(161, 98, 7) !important; }
+            .border-orange-300 { border-color: rgb(253, 186, 116) !important; }
+            .border-orange-700 { border-color: rgb(194, 65, 12) !important; }
+            .border-red-300 { border-color: rgb(252, 165, 165) !important; }
+            .border-red-700 { border-color: rgb(185, 28, 28) !important; }
+          `;
+          clonedDoc.head.appendChild(style);
+        },
       });
-
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
       
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = canvas.width;
-      const imgHeight = canvas.height;
-      const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
-      const imgScaledWidth = imgWidth * ratio;
-      const imgScaledHeight = imgHeight * ratio;
+      // Create PDF
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4',
+      });
       
-      // Center the image
-      const xOffset = (pdfWidth - imgScaledWidth) / 2;
-      const yOffset = 10;
-
-      // Add title
-      const carName = getCarDisplayName(data);
-      pdf.setFontSize(18);
-      pdf.text(`Lease Summary: ${carName}`, pdfWidth / 2, 15, { align: 'center' });
+      // Get page dimensions
+      const pdfWidth = (pdf.internal?.pageSize?.width) ?? 210;
+      const pdfHeight = (pdf.internal?.pageSize?.height) ?? 297;
       
-      // Add date
-      pdf.setFontSize(10);
-      pdf.text(`Generated: ${new Date().toLocaleDateString()}`, pdfWidth / 2, 22, { align: 'center' });
-
-      // Add the summary image
-      pdf.addImage(imgData, 'PNG', xOffset, yOffset + 5, imgScaledWidth, imgScaledHeight);
-
+      // Define margins (generous margins for better appearance)
+      const marginLeft = 20;
+      const marginRight = 20;
+      const marginTop = 25;
+      const marginBottom = 25;
+      
+      // Calculate available space
+      const availableWidth = pdfWidth - marginLeft - marginRight;
+      const availableHeight = pdfHeight - marginTop - marginBottom;
+      
+      // Convert pixels to mm
+      const mmPerPixel = 0.264583;
+      const imgWidthMM = canvas.width * mmPerPixel;
+      const imgHeightMM = canvas.height * mmPerPixel;
+      
+      // Calculate scaling to fit
+      const widthRatio = availableWidth / imgWidthMM;
+      const heightRatio = availableHeight / imgHeightMM;
+      const ratio = Math.min(widthRatio, heightRatio, 1);
+      
+      const imgScaledWidth = imgWidthMM * ratio;
+      const imgScaledHeight = imgHeightMM * ratio;
+      
+      // Center horizontally
+      const xOffset = marginLeft + (availableWidth - imgScaledWidth) / 2;
+      
+      // Add image to PDF
+      const imgData = canvas.toDataURL('image/png', 1.0);
+      pdf.addImage(imgData, 'PNG', xOffset, marginTop, imgScaledWidth, imgScaledHeight);
+      
       // Generate filename
+      const carName = getCarDisplayName(data);
       const sanitizedName = carName
         .replace(/[^a-zA-Z0-9]/g, '-')
         .replace(/-+/g, '-')
@@ -435,7 +677,8 @@ export default function LeaseCalculator() {
       pdf.save(`${sanitizedName}-summary-${uniqueId}.pdf`);
     } catch (error) {
       console.error('Error generating PDF:', error);
-      alert('Failed to generate PDF. Please try again.');
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to generate PDF: ${errorMessage}. Please try again or check the browser console for details.`);
     }
   };
 
