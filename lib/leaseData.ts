@@ -5,6 +5,7 @@ export interface LeaseData {
   carMake: string;
   carModel: string;
   carTier: string;
+  carYear?: number; // Optional vehicle year
   dealership: string;
   vin: string; // Vehicle Identification Number
   msrp: number;
@@ -38,6 +39,7 @@ export const createNewCar = (): LeaseData => ({
   carMake: '',
   carModel: '',
   carTier: '',
+  carYear: undefined,
   dealership: '',
   vin: '',
   msrp: 0,
@@ -61,7 +63,8 @@ export const createNewCar = (): LeaseData => ({
 
 export const getCarDisplayName = (car: LeaseData): string => {
   if (car.carMake && car.carModel) {
-    const baseName = `${car.carMake} ${car.carModel}${car.carTier ? ` ${car.carTier}` : ''}`;
+    const yearPrefix = car.carYear ? `${car.carYear} ` : '';
+    const baseName = `${yearPrefix}${car.carMake} ${car.carModel}${car.carTier ? ` ${car.carTier}` : ''}`;
     return car.dealership ? `${baseName} - ${car.dealership}` : baseName;
   }
   return 'New Car';
@@ -149,6 +152,9 @@ export const migrateCarData = (car: any): LeaseData => {
   }
   if (car.notes === undefined) {
     updated = { ...updated, notes: '' };
+  }
+  if (car.carYear === undefined) {
+    updated = { ...updated, carYear: undefined };
   }
   
   return updated as LeaseData;

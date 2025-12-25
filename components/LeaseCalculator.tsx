@@ -79,7 +79,7 @@ export default function LeaseCalculator() {
     setExpandedSteps((prev) => ({ ...prev, [step]: !prev[step] }));
   };
 
-  const handleInputChange = (field: keyof LeaseData, value: string | number) => {
+  const handleInputChange = (field: keyof LeaseData, value: string | number | undefined) => {
     setData((prev) => {
       const updated = { ...prev, [field]: value };
       // Update the car in savedCars array
@@ -329,6 +329,9 @@ export default function LeaseCalculator() {
     markdown += `| Field | Value |\n`;
     markdown += `|-------|-------|\n`;
     markdown += `| Make | ${data.carMake || 'N/A'} |\n`;
+    if (data.carYear) {
+      markdown += `| Year | ${data.carYear} |\n`;
+    }
     markdown += `| Model | ${data.carModel || 'N/A'} |\n`;
     markdown += `| Tier | ${data.carTier || 'N/A'} |\n`;
     if (data.dealership) {
@@ -587,6 +590,12 @@ export default function LeaseCalculator() {
                 <Text style={styles.label}>Make:</Text>
                 <Text style={styles.value}>{data.carMake || 'N/A'}</Text>
               </View>
+              {data.carYear && (
+                <View style={styles.row}>
+                  <Text style={styles.label}>Year:</Text>
+                  <Text style={styles.value}>{data.carYear}</Text>
+                </View>
+              )}
               <View style={styles.row}>
                 <Text style={styles.label}>Model:</Text>
                 <Text style={styles.value}>{data.carModel || 'N/A'}</Text>
@@ -928,106 +937,88 @@ export default function LeaseCalculator() {
     setVinSuccess(null);
 
     try {
-      // Fetch VIN data from NHTSA API (free, no API key required)
-      const response = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/${data.vin}?format=json`);
+      // Fetch VIN data and MSRP from backend API
+      const response = await fetch('/api/fetch-vin-with-msrp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          vin: data.vin.trim().toUpperCase(),
+          dealership: data.dealership || '',
+        }),
+      });
+
       const result = await response.json();
 
-      if (result.Results && result.Results.length > 0) {
-        const vinDataArray = result.Results;
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to fetch VIN data');
+      }
+
+      if (result.success && result.data) {
+        const vinData = result.data;
         
-        // Check if VIN decode was successful
-        const hasError = vinDataArray.some((item: any) => item.ErrorCode && item.ErrorCode !== '0' && item.ErrorCode !== '');
-        if (hasError) {
-          setVinError('Invalid VIN or unable to decode. Please verify the VIN is correct.');
-          setIsLoadingVIN(false);
-          return;
-        }
-        
-        // Extract vehicle information
-        const vinData = vinDataArray[0];
-        const make = vinData.Make || '';
-        const model = vinData.Model || '';
-        const modelYear = vinData.ModelYear || '';
-        const trim = vinData.Trim || vinData.Series || '';
+        // Update form fields with fetched data
+        setData(prev => ({
+          ...prev,
+          vin: vinData.vin,
+          carYear: vinData.year || prev.carYear,
+          carMake: vinData.make || prev.carMake,
+          carModel: vinData.model || prev.carModel,
+          carTier: vinData.tier || prev.carTier,
+          msrp: vinData.msrp || prev.msrp,
+        }));
         
         // Format all retrieved data as readable text
         const formattedData: string[] = [];
-        formattedData.push(`VIN: ${data.vin}`);
+        formattedData.push(`VIN: ${vinData.vin}`);
         formattedData.push(`Decoded on: ${new Date().toLocaleString()}`);
         formattedData.push('');
-        formattedData.push('=== PRICING INFORMATION ===');
-        formattedData.push('MSRP: [To be fetched or entered manually]');
-        formattedData.push('Median Dealership Sold Price: [To be fetched or entered manually]');
-        formattedData.push('');
-        formattedData.push('💡 To find MSRP and median sold price:');
-        formattedData.push('   • Check manufacturer website or window sticker');
-        formattedData.push('   • Visit Edmunds.com True Market Value (TMV)');
-        formattedData.push('   • Check Kelley Blue Book (KBB.com)');
-        formattedData.push('   • Search CarGurus or AutoTrader for similar vehicles');
-        formattedData.push('');
         formattedData.push('=== Vehicle Information ===');
+        formattedData.push(`Make: ${vinData.make}`);
+        if (vinData.year) {
+          formattedData.push(`Year: ${vinData.year}`);
+        }
+        formattedData.push(`Model: ${vinData.model}`);
+        if (vinData.tier) {
+          formattedData.push(`Trim/Tier: ${vinData.tier}`);
+        }
+        if (vinData.bodyClass) {
+          formattedData.push(`Body Class: ${vinData.bodyClass}`);
+        }
+        if (vinData.driveType) {
+          formattedData.push(`Drive Type: ${vinData.driveType}`);
+        }
+        if (vinData.engineConfiguration) {
+          formattedData.push(`Engine: ${vinData.engineConfiguration}`);
+        }
+        if (vinData.fuelType) {
+          formattedData.push(`Fuel Type: ${vinData.fuelType}`);
+        }
+        if (vinData.transmission) {
+          formattedData.push(`Transmission: ${vinData.transmission}`);
+        }
         
-        // Extract and format all relevant fields
-        const fields = [
-          { key: 'Make', label: 'Make' },
-          { key: 'Model', label: 'Model' },
-          { key: 'ModelYear', label: 'Model Year' },
-          { key: 'Trim', label: 'Trim' },
-          { key: 'Series', label: 'Series' },
-          { key: 'BodyClass', label: 'Body Class' },
-          { key: 'DriveType', label: 'Drive Type' },
-          { key: 'EngineConfiguration', label: 'Engine Configuration' },
-          { key: 'EngineCylinders', label: 'Engine Cylinders' },
-          { key: 'EngineModel', label: 'Engine Model' },
-          { key: 'FuelTypePrimary', label: 'Fuel Type' },
-          { key: 'TransmissionStyle', label: 'Transmission' },
-          { key: 'GVWR', label: 'GVWR' },
-          { key: 'PlantCountry', label: 'Manufacturing Country' },
-          { key: 'PlantCity', label: 'Manufacturing City' },
-          { key: 'PlantState', label: 'Manufacturing State' },
-          { key: 'PlantCompanyName', label: 'Manufacturing Company' },
-        ];
-        
-        fields.forEach(({ key, label }) => {
-          const value = vinData[key];
-          if (value && value !== 'Not Applicable' && value !== '') {
-            formattedData.push(`${label}: ${value}`);
-          }
-        });
-        
-        formattedData.push('');
-        formattedData.push('=== Additional Details ===');
-        
-        // Add any other non-empty fields
-        Object.keys(vinData).forEach((key) => {
-          const value = vinData[key];
-          if (value && 
-              value !== 'Not Applicable' && 
-              value !== '' && 
-              !fields.some(f => f.key === key) &&
-              key !== 'ErrorCode' &&
-              key !== 'ErrorText') {
-            formattedData.push(`${key}: ${value}`);
-          }
-        });
-        
-        // Add pricing information to formatted data
-        const searchQuery = `${modelYear} ${make} ${model} ${trim}`.trim();
         formattedData.push('');
         formattedData.push('=== PRICING INFORMATION ===');
-        formattedData.push('MSRP: [Enter manually or check manufacturer website/window sticker]');
-        formattedData.push('Median Dealership Sold Price: [Check pricing websites below]');
-        formattedData.push('');
-        formattedData.push('💡 To find MSRP and median sold price, check these sources:');
-        formattedData.push(`   • Manufacturer website or window sticker`);
-        formattedData.push(`   • Edmunds TMV: https://www.edmunds.com/tmv.html (Search: ${searchQuery})`);
-        formattedData.push(`   • KBB Price Advisor: https://www.kbb.com/priceadvisor/ (Search: ${searchQuery})`);
-        formattedData.push(`   • CarGurus: Search for ${searchQuery}`);
+        if (vinData.msrp) {
+          formattedData.push(`MSRP: $${vinData.msrp.toLocaleString()} ${vinData.msrpSource ? `(${vinData.msrpSource})` : ''}`);
+          formattedData.push('✓ MSRP has been automatically filled in the form above');
+        } else {
+          formattedData.push('MSRP: [Not found - please enter manually]');
+          formattedData.push('💡 To find MSRP:');
+          formattedData.push('   • Check manufacturer website or window sticker');
+          formattedData.push('   • Visit Edmunds.com True Market Value (TMV)');
+          formattedData.push('   • Check Kelley Blue Book (KBB.com)');
+        }
         
         const formattedText = formattedData.join('\n');
         setVinData(formattedText);
         setVinError(null);
-        setVinSuccess('Vehicle information retrieved! Check pricing links above for MSRP and median sold price.');
+        setVinSuccess(vinData.msrp 
+          ? `Vehicle information and MSRP retrieved! Fields have been auto-filled.`
+          : `Vehicle information retrieved! MSRP not found - please enter manually.`
+        );
         
         // Clear success message after 8 seconds
         setTimeout(() => {
@@ -1038,7 +1029,7 @@ export default function LeaseCalculator() {
       }
     } catch (error) {
       console.error('Error fetching VIN data:', error);
-      setVinError('Failed to fetch vehicle information. Please check your internet connection and try again.');
+      setVinError((error as Error).message || 'Failed to fetch vehicle information. Please check your internet connection and try again.');
     } finally {
       setIsLoadingVIN(false);
     }
@@ -1384,6 +1375,20 @@ export default function LeaseCalculator() {
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
         <h2 className="text-2xl font-bold mb-4 text-gray-900 dark:text-white">Car Details</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Car Year (Optional)
+            </label>
+            <input
+              type="number"
+              value={data.carYear || ''}
+              onChange={(e) => handleInputChange('carYear', e.target.value ? parseInt(e.target.value) : undefined)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              placeholder="e.g., 2024"
+              min="1900"
+              max={new Date().getFullYear() + 1}
+            />
+          </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Car Make
@@ -2284,6 +2289,12 @@ export default function LeaseCalculator() {
                     <span className="text-gray-600 dark:text-gray-400">Make:</span>
                     <span className="font-medium text-gray-900 dark:text-white">{data.carMake || 'N/A'}</span>
                   </div>
+                  {data.carYear && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-600 dark:text-gray-400">Year:</span>
+                      <span className="font-medium text-gray-900 dark:text-white">{data.carYear}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className="text-gray-600 dark:text-gray-400">Model:</span>
                     <span className="font-medium text-gray-900 dark:text-white">{data.carModel || 'N/A'}</span>

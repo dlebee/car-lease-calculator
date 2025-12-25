@@ -7,6 +7,7 @@ import {
   getCarDisplayName,
   getCarPayments,
   loadFromStorage,
+  saveToStorage,
 } from '@/lib/leaseData';
 
 export default function ComparisonView() {
@@ -29,6 +30,13 @@ export default function ComparisonView() {
   const [isEditingOverride, setIsEditingOverride] = useState(false);
   const [lastSortedOrder, setLastSortedOrder] = useState<string[]>([]);
   const [editingTimeout, setEditingTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [analysis, setAnalysis] = useState<string | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [followUpPrompt, setFollowUpPrompt] = useState('');
+  const [isFollowUpAnalyzing, setIsFollowUpAnalyzing] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState('');
+  const [vinLookup, setVinLookup] = useState<{ [carId: string]: { vin: string; isLoading: boolean; error: string | null } }>({});
 
   // Load from localStorage
   useEffect(() => {
@@ -320,6 +328,289 @@ export default function ComparisonView() {
     }
   };
 
+  // VIN Lookup Function
+  const handleVINLookup = async (carId: string, vin: string) => {
+    if (!vin || vin.length !== 17) {
+      setVinLookup(prev => ({
+        ...prev,
+        [carId]: { vin, isLoading: false, error: 'Please enter a valid 17-character VIN' }
+      }));
+      return;
+    }
+
+    setVinLookup(prev => ({
+      ...prev,
+      [carId]: { vin, isLoading: true, error: null }
+    }));
+
+    try {
+      const car = savedCars.cars.find(c => c.id === carId);
+      const response = await fetch('/api/fetch-vin-with-msrp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          vin: vin.trim().toUpperCase(),
+          dealership: car?.dealership || '',
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to fetch VIN data');
+      }
+
+      if (result.success && result.data) {
+        // Update the car with fetched data
+        const updatedCars = savedCars.cars.map(c => {
+          if (c.id === carId) {
+            return {
+              ...c,
+              vin: result.data.vin,
+              carYear: result.data.year || c.carYear,
+              carMake: result.data.make || c.carMake,
+              carModel: result.data.model || c.carModel,
+              carTier: result.data.tier || c.carTier,
+              msrp: result.data.msrp || c.msrp,
+            };
+          }
+          return c;
+        });
+
+        const updatedSavedCars = {
+          ...savedCars,
+          cars: updatedCars,
+        };
+        setSavedCars(updatedSavedCars);
+        saveToStorage(updatedSavedCars);
+
+        setVinLookup(prev => ({
+          ...prev,
+          [carId]: { vin, isLoading: false, error: null }
+        }));
+      }
+    } catch (error) {
+      setVinLookup(prev => ({
+        ...prev,
+        [carId]: { vin, isLoading: false, error: (error as Error).message }
+      }));
+    }
+  };
+
+  // CSV Export Function
+  const exportToCSV = () => {
+    if (sortedCars.length === 0) {
+      alert('Please select at least one car to export');
+      return;
+    }
+
+    const headers = ['Field', ...sortedCars.map(car => getCarDisplayName(car))];
+    const rows: string[][] = [];
+
+    // Add override info if active
+    const hasOverrides = overrideDownPayment !== '' || Object.keys(carOverrides).length > 0;
+    if (hasOverrides) {
+      rows.push(['', '']);
+      rows.push(['COMPARISON OVERRIDES', '']);
+      if (overrideDownPayment !== '') {
+        rows.push(['Down Payment Override', formatCurrency(overrideDownPaymentValue || 0)]);
+      }
+      rows.push(['', '']);
+      rows.push(['NOTE: All financial metrics below are calculated using the standardized overrides above', '']);
+      rows.push(['', '']);
+    }
+
+    // Add all comparison fields
+    const fields = [
+      { label: 'Year', getValue: (car: LeaseData) => car.carYear || 'N/A' },
+      { label: 'Make', getValue: (car: LeaseData) => car.carMake || 'N/A' },
+      { label: 'Model', getValue: (car: LeaseData) => car.carModel || 'N/A' },
+      { label: 'Tier', getValue: (car: LeaseData) => car.carTier || 'N/A' },
+      { label: 'Dealership', getValue: (car: LeaseData) => car.dealership || 'N/A' },
+      { label: 'VIN', getValue: (car: LeaseData) => car.vin || 'N/A' },
+      { label: 'MSRP', getValue: (car: LeaseData) => car.msrp, format: 'currency' },
+      { label: 'Discount %', getValue: (car: LeaseData) => car.discount || 0, format: 'percentage' },
+      { label: 'Base Cap Cost', getValue: (car: LeaseData) => {
+        const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+        return payments.baseCapCost;
+      }, format: 'currency' },
+      { label: 'Adjusted Cap Cost', getValue: (car: LeaseData) => {
+        const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+        return payments.adjustedCapCost;
+      }, format: 'currency' },
+      { label: 'Residual %', getValue: (car: LeaseData) => car.residualPercent, format: 'percentage' },
+      { label: 'Residual Value', getValue: (car: LeaseData) => {
+        const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+        return payments.residualValue;
+      }, format: 'currency' },
+      { label: 'Depreciation', getValue: (car: LeaseData) => {
+        const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+        return payments.depreciation;
+      }, format: 'currency' },
+      { label: 'Lease Term (months)', getValue: (car: LeaseData) => car.leaseTerm },
+      { label: 'APR %', getValue: (car: LeaseData) => {
+        const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+        return payments.currentApr;
+      }, format: 'percentage' },
+      { label: 'Monthly Depreciation', getValue: (car: LeaseData) => {
+        const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+        return payments.monthlyDepreciation;
+      }, format: 'currency' },
+      { label: 'Monthly Finance Charge', getValue: (car: LeaseData) => {
+        const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+        return payments.monthlyFinanceCharge;
+      }, format: 'currency' },
+      { label: 'Monthly Payment (with tax)', getValue: (car: LeaseData) => {
+        const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+        return payments.totalMonthlyPayment;
+      }, format: 'currency' },
+      { label: 'Total Lease Cost', getValue: (car: LeaseData) => {
+        const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+        return payments.totalMonthlyPayment * car.leaseTerm;
+      }, format: 'currency' },
+      { label: 'Total Fees', getValue: (car: LeaseData) => {
+        const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+        return payments.totalFees;
+      }, format: 'currency' },
+      { label: 'Total Down Payment', getValue: (car: LeaseData) => {
+        const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+        return payments.totalDownPayment;
+      }, format: 'currency' },
+    ];
+
+    fields.forEach(field => {
+      const row: string[] = [field.label];
+      sortedCars.forEach(car => {
+        const value = field.getValue(car);
+        let cellValue = '';
+        if (field.format === 'currency') {
+          cellValue = typeof value === 'number' ? value.toFixed(2) : '';
+        } else if (field.format === 'percentage') {
+          cellValue = typeof value === 'number' ? value.toFixed(2) : '';
+        } else {
+          cellValue = String(value);
+        }
+        row.push(cellValue);
+      });
+      rows.push(row);
+    });
+
+    const csvContent = [
+      headers.map(h => h.includes(',') ? `"${h.replace(/"/g, '""')}"` : h).join(','),
+      ...rows.map(row => row.map(cell => {
+        if (cell.includes(',') || cell.includes('"') || cell.includes('\n')) {
+          return `"${cell.replace(/"/g, '""')}"`;
+        }
+        return cell;
+      }).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `lease-comparison-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // AI Analysis Functions
+  const handleAnalyzeComparison = async () => {
+    if (sortedCars.length === 0) {
+      setAnalysisError('Please select at least one car to analyze');
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setAnalysis(null);
+    setAnalysisError(null);
+
+    try {
+      const overrides: any = {};
+      if (overrideDownPaymentValue !== undefined) {
+        overrides.downPayment = overrideDownPaymentValue;
+      }
+      
+      // Collect car-specific overrides
+      const carOverridesData: any = {};
+      sortedCars.forEach(car => {
+        const carOverrides = getCarOverrides(car.id);
+        if (carOverrides && Object.keys(carOverrides).length > 0) {
+          carOverridesData[car.id] = carOverrides;
+        }
+      });
+
+      const response = await fetch('/api/analyze-lease-comparison', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          cars: sortedCars,
+          overrides: Object.keys(overrides).length > 0 ? overrides : null,
+          carOverrides: Object.keys(carOverridesData).length > 0 ? carOverridesData : null,
+          customPrompt: customPrompt.trim() || undefined,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to analyze comparison');
+      }
+
+      if (result.success && result.analysis) {
+        setAnalysis(result.analysis);
+      }
+    } catch (error) {
+      setAnalysisError((error as Error).message);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleFollowUpQuestion = async () => {
+    if (!analysis || !followUpPrompt.trim()) {
+      setAnalysisError('Please enter a follow-up question');
+      return;
+    }
+
+    setIsFollowUpAnalyzing(true);
+    setAnalysisError(null);
+
+    try {
+      const response = await fetch('/api/follow-up-lease-analysis', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          previousAnalysis: analysis,
+          question: followUpPrompt.trim(),
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to process follow-up question');
+      }
+
+      if (result.success && result.analysis) {
+        setAnalysis(result.analysis);
+        setFollowUpPrompt('');
+      }
+    } catch (error) {
+      setAnalysisError((error as Error).message);
+    } finally {
+      setIsFollowUpAnalyzing(false);
+    }
+  };
+
   if (sortedCars.length === 0) {
     return (
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 text-center">
@@ -364,6 +655,12 @@ export default function ComparisonView() {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-2">
           <h2 className="text-lg font-bold text-gray-900 dark:text-white">Car Comparison</h2>
           <div className="flex gap-1">
+            <button
+              onClick={exportToCSV}
+              className="px-2 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+            >
+              Export CSV
+            </button>
             <button
               onClick={handleSelectAll}
               className="px-2 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
@@ -453,14 +750,50 @@ export default function ComparisonView() {
                   <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">{formatCurrency(car.msrp)}</td>
                 ))}
               </tr>
-              {sortedCars.some(car => car.vin) && (
                 <tr className="border-b border-gray-200 dark:border-gray-700">
                   <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">VIN</td>
-                  {sortedCars.map((car) => (
-                    <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white font-mono text-xs">{car.vin || 'N/A'}</td>
-                  ))}
-                </tr>
-              )}
+                {sortedCars.map((car) => {
+                  const vinLookupState = vinLookup[car.id];
+                  return (
+                    <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white text-xs">
+                      <div className="flex flex-col items-center gap-1">
+                        <div className="font-mono text-xs">{car.vin || 'N/A'}</div>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={vinLookupState?.vin || ''}
+                            onChange={(e) => setVinLookup(prev => ({
+                              ...prev,
+                              [car.id]: { vin: e.target.value, isLoading: false, error: null }
+                            }))}
+                            placeholder="Enter VIN"
+                            className="w-32 px-2 py-1 text-[10px] border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono uppercase"
+                            maxLength={17}
+                          />
+                          <button
+                            onClick={() => handleVINLookup(car.id, vinLookupState?.vin || '')}
+                            disabled={vinLookupState?.isLoading || !vinLookupState?.vin}
+                            className="px-2 py-1 text-[10px] bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Fetch vehicle details and MSRP"
+                          >
+                            {vinLookupState?.isLoading ? '...' : '🔍'}
+                          </button>
+                        </div>
+                        {vinLookupState?.error && (
+                          <div className="text-[10px] text-red-600 dark:text-red-400 mt-1">
+                            {vinLookupState.error}
+                          </div>
+                        )}
+                        {vinLookupState && !vinLookupState.error && !vinLookupState.isLoading && car.vin && (
+                          <div className="text-[10px] text-green-600 dark:text-green-400 mt-1">
+                            ✓ Updated
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
               {sortedCars.some(car => car.dealership) && (
                 <tr className="border-b border-gray-200 dark:border-gray-700">
                   <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Dealership</td>
@@ -1068,13 +1401,13 @@ export default function ComparisonView() {
                 </p>
                 <div className="text-xs text-blue-900 dark:text-blue-100 font-semibold mt-3 pt-3 border-t border-blue-200 dark:border-blue-700">
                   Example ({getCarDisplayName(cheapestCar)}):
-                </div>
+      </div>
                 <div className="text-xs text-blue-800 dark:text-blue-200 mt-1 space-y-1">
                   <div>• Cap Amount: {formatCurrency(cheapestPayments.adjustedCapCost)}</div>
                   <div>• Residual Value: {formatCurrency(cheapestPayments.residualValue)}</div>
                   <div>• Total Depreciation: {formatCurrency(cheapestPayments.adjustedCapCost)} - {formatCurrency(cheapestPayments.residualValue)} = <span className="font-semibold">{formatCurrency(cheapestPayments.depreciation)}</span></div>
                   <div>• Monthly Depreciation: {formatCurrency(cheapestPayments.depreciation)} ÷ {cheapestCar.leaseTerm} months = <span className="font-semibold">{formatCurrency(cheapestPayments.monthlyDepreciation)}/month</span></div>
-                </div>
+    </div>
                 <div className="text-xs text-blue-900 dark:text-blue-100 font-semibold mt-3 pt-3 border-t border-blue-200 dark:border-blue-700">
                   Key Insight:
                 </div>
@@ -1205,6 +1538,120 @@ export default function ComparisonView() {
             </div>
           );
         })()}
+
+        {/* AI Analysis Section */}
+        <div className="mt-6 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">AI Analysis</h3>
+            <button
+              onClick={handleAnalyzeComparison}
+              disabled={isAnalyzing || sortedCars.length === 0}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isAnalyzing ? 'Analyzing...' : 'Analyze Comparison'}
+            </button>
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Custom Analysis Request (Optional):
+            </label>
+            <textarea
+              value={customPrompt}
+              onChange={(e) => setCustomPrompt(e.target.value)}
+              placeholder="E.g., Focus on residual values and negotiation opportunities..."
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+              rows={2}
+            />
+          </div>
+
+          {analysisError && (
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+              <p className="text-sm text-red-800 dark:text-red-200">{analysisError}</p>
+            </div>
+          )}
+
+          {analysis && (
+            <div className="mb-4">
+              <div className="prose prose-sm dark:prose-invert max-w-none bg-gray-50 dark:bg-gray-900 p-4 rounded-lg border border-gray-200 dark:border-gray-700 overflow-x-auto">
+                <div 
+                  className="text-sm text-gray-800 dark:text-gray-200 markdown-content"
+                  dangerouslySetInnerHTML={{ 
+                    __html: (() => {
+                      let html = analysis;
+                      
+                      // Convert markdown tables - handle multi-line tables
+                      const tableRegex = /(\|.+\|(?:\n\|[:\s-]+\|)?(?:\n\|.+\|)+)/g;
+                      html = html.replace(tableRegex, (tableMatch) => {
+                        const lines = tableMatch.trim().split('\n');
+                        const rows: string[] = [];
+                        
+                        lines.forEach((line, index) => {
+                          // Skip separator row (contains --- or :---)
+                          if (line.includes('---') || line.includes(':')) {
+                            return;
+                          }
+                          
+                          const cells = line.split('|').map(cell => cell.trim()).filter(cell => cell);
+                          if (cells.length > 0) {
+                            const isHeader = index === 0;
+                            const tag = isHeader ? 'th' : 'td';
+                            const cellClass = isHeader 
+                              ? 'px-3 py-2 font-semibold bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-left'
+                              : 'px-3 py-2 border border-gray-300 dark:border-gray-600';
+                            rows.push(`<tr>${cells.map(cell => `<${tag} class="${cellClass}">${cell}</${tag}>`).join('')}</tr>`);
+                          }
+                        });
+                        
+                        if (rows.length > 0) {
+                          const headerRow = rows[0];
+                          const bodyRows = rows.slice(1).join('');
+                          return `<div class="overflow-x-auto my-4"><table class="min-w-full border-collapse border border-gray-300 dark:border-gray-600"><thead>${headerRow}</thead><tbody>${bodyRows}</tbody></table></div>`;
+                        }
+                        return tableMatch;
+                      });
+                      
+                      // Convert headers
+                      html = html.replace(/## (.*?)(<br \/>|$|\n)/g, '<h2 class="text-base font-bold mt-4 mb-2 text-gray-900 dark:text-white">$1</h2>');
+                      html = html.replace(/### (.*?)(<br \/>|$|\n)/g, '<h3 class="text-sm font-bold mt-3 mb-1 text-gray-900 dark:text-white">$1</h3>');
+                      
+                      // Convert bold
+                      html = html.replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold">$1</strong>');
+                      
+                      // Convert bullet points
+                      html = html.replace(/^- (.*?)(<br \/>|$|\n)/gm, '<li class="ml-4 list-disc">$1</li>');
+                      
+                      // Convert line breaks (but preserve table structure)
+                      html = html.replace(/\n/g, '<br />');
+                      
+                      return html;
+                    })()
+                  }} 
+                />
+              </div>
+
+              <div className="mt-4">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={followUpPrompt}
+                    onChange={(e) => setFollowUpPrompt(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && !isFollowUpAnalyzing && handleFollowUpQuestion()}
+                    placeholder="Ask a follow-up question..."
+                    className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                  />
+                  <button
+                    onClick={handleFollowUpQuestion}
+                    disabled={isFollowUpAnalyzing || !followUpPrompt.trim()}
+                    className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isFollowUpAnalyzing ? 'Asking...' : 'Ask'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
