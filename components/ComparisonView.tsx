@@ -59,6 +59,14 @@ export default function ComparisonView() {
   const formatCurrency = (amount: number) => 
     `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+  // Calculate expected residual percentage based on lease term
+  // Formula: Base 60% for 36 months, adjust by 0.5% per month difference
+  const getExpectedResidualPercent = (leaseTerm: number): number => {
+    const baseResidual = 60;
+    const termAdjustment = (leaseTerm - 36) * 0.5;
+    return Math.max(0, Math.min(100, baseResidual - termAdjustment));
+  };
+
   // Helper function to get payments with optional overrides
   const getCarPaymentsWithOverride = (
     car: LeaseData, 
@@ -496,6 +504,33 @@ export default function ComparisonView() {
                   <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">{car.residualPercent.toFixed(1)}%</td>
                 ))}
               </tr>
+              <tr className="border-b border-gray-200 dark:border-gray-700 bg-green-50 dark:bg-green-900/20">
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-green-50 dark:bg-green-900/20 z-10">Expected Residual %<br/><span className="text-[10px] text-gray-500 dark:text-gray-400">(Based on lease term)</span></td>
+                {sortedCars.map((car) => {
+                  const expectedResidual = getExpectedResidualPercent(car.leaseTerm);
+                  const actualResidual = car.residualPercent;
+                  const difference = actualResidual - expectedResidual;
+                  const isGood = difference >= -2; // Within 2% is considered good
+                  return (
+                    <td key={car.id} className="p-1.5 text-center text-xs">
+                      <div className="flex flex-col items-center gap-0.5">
+                        <div className={`font-semibold ${isGood ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}`}>
+                          {expectedResidual.toFixed(1)}%
+                        </div>
+                        <div className="text-[10px] text-gray-600 dark:text-gray-400">
+                          Actual: {actualResidual.toFixed(1)}%
+                        </div>
+                        <div className={`text-[10px] font-medium ${difference >= 0 ? 'text-green-600 dark:text-green-400' : difference >= -2 ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'}`}>
+                          {difference >= 0 ? `+${difference.toFixed(1)}%` : `${difference.toFixed(1)}%`}
+                        </div>
+                        <div className="text-[9px] text-gray-500 dark:text-gray-400 mt-0.5">
+                          ({car.leaseTerm}mo term)
+                        </div>
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
               <tr className="border-b border-gray-200 dark:border-gray-700">
                 <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">APR</td>
                 {sortedCars.map((car) => {
@@ -629,11 +664,20 @@ export default function ComparisonView() {
                 })}
               </tr>
               <tr className="border-b border-gray-200 dark:border-gray-700">
-                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Depreciation (Total)</td>
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Depreciation (Total)<br/><span className="text-[10px] text-gray-500 dark:text-gray-400">Cap - Residual</span></td>
                 {sortedCars.map((car) => {
                   const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+                  const tooltipText = `Depreciation Calculation:\nCap Amount: ${formatCurrency(payments.adjustedCapCost)}\nResidual Value: ${formatCurrency(payments.residualValue)}\n\nTotal Depreciation:\n${formatCurrency(payments.adjustedCapCost)} - ${formatCurrency(payments.residualValue)} = ${formatCurrency(payments.depreciation)}`;
                   return (
-                    <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">{formatCurrency(payments.depreciation)}</td>
+                    <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">
+                      <div className="tooltip-container flex flex-col items-center gap-0.5 cursor-help">
+                        <div className="font-semibold">{formatCurrency(payments.depreciation)}</div>
+                        <div className="text-[10px] text-gray-600 dark:text-gray-400">
+                          {formatCurrency(payments.adjustedCapCost)} - {formatCurrency(payments.residualValue)}
+                        </div>
+                        <div className="tooltip-text">{tooltipText}</div>
+                      </div>
+                    </td>
                   );
                 })}
               </tr>
@@ -643,20 +687,39 @@ export default function ComparisonView() {
                 <td colSpan={sortedCars.length + 1} className="p-1 font-bold text-gray-900 dark:text-white text-xs">Monthly Payments</td>
               </tr>
               <tr className="border-b border-gray-200 dark:border-gray-700">
-                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Monthly Depreciation</td>
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Monthly Depreciation<br/><span className="text-[10px] text-gray-500 dark:text-gray-400">Depreciation ÷ Months</span></td>
                 {sortedCars.map((car) => {
                   const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+                  const tooltipText = `Depreciation Calculation:\nTotal Depreciation: ${formatCurrency(payments.depreciation)}\n(Cap Amount: ${formatCurrency(payments.adjustedCapCost)} - Residual Value: ${formatCurrency(payments.residualValue)})\n\nMonthly Depreciation:\n${formatCurrency(payments.depreciation)} ÷ ${car.leaseTerm} months = ${formatCurrency(payments.monthlyDepreciation)}`;
                   return (
-                    <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">{formatCurrency(payments.monthlyDepreciation)}</td>
+                    <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">
+                      <div className="tooltip-container flex flex-col items-center gap-0.5 cursor-help">
+                        <div className="font-semibold">{formatCurrency(payments.monthlyDepreciation)}</div>
+                        <div className="text-[10px] text-gray-600 dark:text-gray-400">
+                          {formatCurrency(payments.depreciation)} ÷ {car.leaseTerm}
+                        </div>
+                        <div className="tooltip-text">{tooltipText}</div>
+                      </div>
+                    </td>
                   );
                 })}
               </tr>
               <tr className="border-b border-gray-200 dark:border-gray-700">
-                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Monthly Finance Charge</td>
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Monthly Finance Charge<br/><span className="text-[10px] text-gray-500 dark:text-gray-400">(Cap + Residual) × Rate</span></td>
                 {sortedCars.map((car) => {
                   const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+                  const monthlyRate = payments.currentApr / 100 / 12;
+                  const tooltipText = `Finance Charge Calculation:\nCap Amount: ${formatCurrency(payments.adjustedCapCost)}\nResidual Value: ${formatCurrency(payments.residualValue)}\nAPR: ${payments.currentApr.toFixed(2)}%\nMonthly Rate: ${payments.currentApr.toFixed(2)}% ÷ 12 = ${(monthlyRate * 100).toFixed(4)}%\n\nMonthly Finance Charge:\n(${formatCurrency(payments.adjustedCapCost)} + ${formatCurrency(payments.residualValue)}) × ${(monthlyRate * 100).toFixed(4)}% = ${formatCurrency(payments.monthlyFinanceCharge)}`;
                   return (
-                    <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">{formatCurrency(payments.monthlyFinanceCharge)}</td>
+                    <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">
+                      <div className="tooltip-container flex flex-col items-center gap-0.5">
+                        <div className="font-semibold cursor-help">{formatCurrency(payments.monthlyFinanceCharge)}</div>
+                        <div className="text-[10px] text-gray-600 dark:text-gray-400 cursor-help">
+                          ({formatCurrency(payments.adjustedCapCost)} + {formatCurrency(payments.residualValue)}) × {payments.currentApr.toFixed(2)}% ÷ 12
+                        </div>
+                        <div className="tooltip-text">{tooltipText}</div>
+                      </div>
+                    </td>
                   );
                 })}
               </tr>
@@ -895,16 +958,25 @@ export default function ComparisonView() {
                 })}
               </tr>
               <tr className="border-b border-gray-200 dark:border-gray-700 bg-yellow-50 dark:bg-yellow-900/20">
-                <td className="p-1.5 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700 text-xs">Monthly Payment for Depreciation</td>
+                <td className="p-1.5 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700 text-xs">Monthly Payment for Depreciation<br/><span className="text-[10px] text-gray-500 dark:text-gray-400">Depreciation ÷ Months</span></td>
                 {sortedCars.map((car) => {
                   const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+                  const tooltipText = `Depreciation Calculation:\nTotal Depreciation: ${formatCurrency(payments.depreciation)}\n(Cap Amount: ${formatCurrency(payments.adjustedCapCost)} - Residual Value: ${formatCurrency(payments.residualValue)})\n\nMonthly Depreciation:\n${formatCurrency(payments.depreciation)} ÷ ${car.leaseTerm} months = ${formatCurrency(payments.monthlyDepreciation)}`;
                   return (
-                    <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">{formatCurrency(payments.monthlyDepreciation)}</td>
+                    <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">
+                      <div className="tooltip-container flex flex-col items-center gap-0.5 cursor-help">
+                        <div className="font-semibold">{formatCurrency(payments.monthlyDepreciation)}</div>
+                        <div className="text-[10px] text-gray-600 dark:text-gray-400">
+                          {formatCurrency(payments.depreciation)} ÷ {car.leaseTerm}
+                        </div>
+                        <div className="tooltip-text">{tooltipText}</div>
+                      </div>
+                    </td>
                   );
                 })}
               </tr>
               <tr className="border-b border-gray-200 dark:border-gray-700 bg-yellow-50 dark:bg-yellow-900/20">
-                <td className="p-1.5 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700 text-xs">Monthly Payment for Finance</td>
+                <td className="p-1.5 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700 text-xs">Monthly Payment for Finance<br/><span className="text-[10px] text-gray-500 dark:text-gray-400">(Cap + Residual) × Rate</span></td>
                 {sortedCars.map((car) => {
                   const overrides = getCarOverrides(car.id);
                   const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, overrides);
@@ -912,11 +984,17 @@ export default function ComparisonView() {
                   const marketFactor = overrides?.marketFactor !== undefined ? overrides.marketFactor : (overrides?.apr !== undefined ? overrides.apr / 2400 : (car.marketFactor || (car.apr ? car.apr / 2400 : 0)));
                   const hasAprOverride = carOverrides[car.id]?.apr !== undefined && carOverrides[car.id]?.apr !== '';
                   const hasMfOverride = carOverrides[car.id]?.marketFactor !== undefined && carOverrides[car.id]?.marketFactor !== '';
+                  const monthlyRate = apr / 100 / 12;
+                  const tooltipText = `Finance Charge Calculation:\nCap Amount: ${formatCurrency(payments.adjustedCapCost)}\nResidual Value: ${formatCurrency(payments.residualValue)}\nAPR: ${apr.toFixed(2)}%\nMonthly Rate: ${apr.toFixed(2)}% ÷ 12 = ${(monthlyRate * 100).toFixed(4)}%\n\nMonthly Finance Charge:\n(${formatCurrency(payments.adjustedCapCost)} + ${formatCurrency(payments.residualValue)}) × ${(monthlyRate * 100).toFixed(4)}% = ${formatCurrency(payments.monthlyFinanceCharge)}`;
                   return (
                     <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">
-                      <div className="flex flex-col items-center gap-0.5">
-                        <div className="text-xs">{formatCurrency(payments.monthlyFinanceCharge)}</div>
-                        <div className="text-[10px] text-gray-600 dark:text-gray-400">({apr.toFixed(2)}% APR, {marketFactor.toFixed(6)} MF)</div>
+                      <div className="tooltip-container flex flex-col items-center gap-0.5">
+                        <div className="font-semibold cursor-help">{formatCurrency(payments.monthlyFinanceCharge)}</div>
+                        <div className="text-[10px] text-gray-600 dark:text-gray-400 cursor-help">
+                          ({formatCurrency(payments.adjustedCapCost)} + {formatCurrency(payments.residualValue)}) × {apr.toFixed(2)}% ÷ 12
+                        </div>
+                        <div className="tooltip-text">{tooltipText}</div>
+                        <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">({apr.toFixed(2)}% APR, {marketFactor.toFixed(6)} MF)</div>
                         <div className="flex items-center gap-0.5 mt-0.5">
                           <input
                             type="number"
@@ -974,6 +1052,159 @@ export default function ComparisonView() {
             </tbody>
           </table>
         </div>
+
+        {/* Explanatory Legends */}
+        {sortedCars.length > 0 && (() => {
+          const cheapestCar = sortedCars[0];
+          const cheapestPayments = getCarPaymentsWithOverride(cheapestCar, overrideDownPaymentValue, getCarOverrides(cheapestCar.id));
+          return (
+            <div className="mt-6 space-y-4">
+              <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
+                <h3 className="text-sm font-bold text-blue-900 dark:text-blue-100 mb-2">
+                  Why Do Dealerships Make You Pay Depreciation?
+                </h3>
+                <p className="text-xs text-blue-800 dark:text-blue-200 leading-relaxed mb-2">
+                  Depreciation represents the value your vehicle loses over the lease term. When you lease a car, you're essentially paying for the difference between what the car is worth now (Cap Amount) and what it will be worth at the end of the lease (Residual Value). This is the portion of the vehicle's value you "use up" during your lease period. The dealership needs to recover this lost value because the car will be worth less when you return it, and they need to account for normal wear, mileage, and market depreciation.
+                </p>
+                <div className="text-xs text-blue-900 dark:text-blue-100 font-semibold mt-3 pt-3 border-t border-blue-200 dark:border-blue-700">
+                  Example ({getCarDisplayName(cheapestCar)}):
+                </div>
+                <div className="text-xs text-blue-800 dark:text-blue-200 mt-1 space-y-1">
+                  <div>• Cap Amount: {formatCurrency(cheapestPayments.adjustedCapCost)}</div>
+                  <div>• Residual Value: {formatCurrency(cheapestPayments.residualValue)}</div>
+                  <div>• Total Depreciation: {formatCurrency(cheapestPayments.adjustedCapCost)} - {formatCurrency(cheapestPayments.residualValue)} = <span className="font-semibold">{formatCurrency(cheapestPayments.depreciation)}</span></div>
+                  <div>• Monthly Depreciation: {formatCurrency(cheapestPayments.depreciation)} ÷ {cheapestCar.leaseTerm} months = <span className="font-semibold">{formatCurrency(cheapestPayments.monthlyDepreciation)}/month</span></div>
+                </div>
+                <div className="text-xs text-blue-900 dark:text-blue-100 font-semibold mt-3 pt-3 border-t border-blue-200 dark:border-blue-700">
+                  Key Insight:
+                </div>
+                <p className="text-xs text-blue-800 dark:text-blue-200 leading-relaxed mt-1">
+                  Notice how the residual value directly affects your monthly payment: <span className="font-semibold">the higher the residual value, the lower you pay per month</span> because you have less depreciation to pay. In the example above, if the residual value were higher (meaning the car retains more value), the depreciation amount ({formatCurrency(cheapestPayments.depreciation)}) would be smaller, resulting in a lower monthly depreciation payment. This is why vehicles with better resale value (higher residual percentages) typically have lower lease payments.
+                </p>
+              </div>
+
+              <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4 border border-purple-200 dark:border-purple-800">
+                <h3 className="text-sm font-bold text-purple-900 dark:text-purple-100 mb-2">
+                  Why Do Dealerships Charge Finance Fees on the Residual Value?
+                </h3>
+                <p className="text-xs text-purple-800 dark:text-purple-200 leading-relaxed mb-2">
+                  During a lease, the dealership (or leasing company) owns the vehicle and has their money tied up in both the portion you're using (depreciation) AND the residual value (what the car will be worth at lease end). Even though you're not buying the residual portion, the dealership still has capital invested in it. They charge finance fees on the total amount (Cap Amount + Residual Value) because they're financing the entire vehicle's value, not just the depreciation portion. This compensates them for the opportunity cost of having their money tied up in the vehicle's residual value throughout the lease term.
+                </p>
+                <div className="text-xs text-purple-900 dark:text-purple-100 font-semibold mt-3 pt-3 border-t border-purple-200 dark:border-purple-700">
+                  Example ({getCarDisplayName(cheapestCar)}):
+                </div>
+                <div className="text-xs text-purple-800 dark:text-purple-200 mt-1 space-y-1">
+                  <div>• Cap Amount: {formatCurrency(cheapestPayments.adjustedCapCost)}</div>
+                  <div>• Residual Value: {formatCurrency(cheapestPayments.residualValue)}</div>
+                  <div>• Total Financed: {formatCurrency(cheapestPayments.adjustedCapCost)} + {formatCurrency(cheapestPayments.residualValue)} = <span className="font-semibold">{formatCurrency(cheapestPayments.adjustedCapCost + cheapestPayments.residualValue)}</span></div>
+                  <div>• APR: {cheapestPayments.currentApr.toFixed(2)}% (Monthly Rate: {(cheapestPayments.currentApr / 100 / 12 * 100).toFixed(4)}%)</div>
+                  <div>• Monthly Finance Charge: {formatCurrency(cheapestPayments.adjustedCapCost + cheapestPayments.residualValue)} × {(cheapestPayments.currentApr / 100 / 12 * 100).toFixed(4)}% = <span className="font-semibold">{formatCurrency(cheapestPayments.monthlyFinanceCharge)}/month</span></div>
+                </div>
+              </div>
+
+              <div className="bg-orange-50 dark:bg-orange-900/20 rounded-lg p-4 border border-orange-200 dark:border-orange-800">
+                <h3 className="text-sm font-bold text-orange-900 dark:text-orange-100 mb-2">
+                  ⚠️ Dealership Tactic: APR Markup to Create Illusion of Discount
+                </h3>
+                <p className="text-xs text-orange-800 dark:text-orange-200 leading-relaxed">
+                  Dealerships often use a deceptive tactic where they offer a discount on the vehicle price but simultaneously mark up the APR (interest rate). This creates an illusion that you're getting a great deal, but in reality, you end up paying the same or more through higher finance charges. Always check both the discount percentage AND the APR rate. A lower price with a higher APR may cost you more over the lease term than a higher price with a lower APR. Compare the total monthly payment and total lease cost, not just the discount amount.
+                </p>
+              </div>
+
+              <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-4 border border-red-200 dark:border-red-800">
+                <h3 className="text-sm font-bold text-red-900 dark:text-red-100 mb-2">
+                  💡 Down Payments Are Not Necessary on Leases
+                </h3>
+                <p className="text-xs text-red-800 dark:text-red-200 leading-relaxed">
+                  Unlike purchasing a car, <span className="font-semibold">down payments on leases don't give you any actual rebate or equity</span>. They only reduce your monthly payment by spreading the same total cost differently. Since you don't own the car at the end of the lease, that down payment money is essentially gone - you're just pre-paying part of the lease. Consider keeping your down payment low or at $0, and instead invest that money elsewhere or keep it for emergencies. The only exception is if the dealership offers a specific incentive tied to a down payment, but even then, calculate whether the total cost is truly lower.
+                </p>
+              </div>
+
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-4 border border-yellow-200 dark:border-yellow-800">
+                <h3 className="text-sm font-bold text-yellow-900 dark:text-yellow-100 mb-2">
+                  ⚠️ Dealership Tactic: Discounting Car but Marking Up Residual Value
+                </h3>
+                <p className="text-xs text-yellow-800 dark:text-yellow-200 leading-relaxed mb-2">
+                  Some dealerships may offer a discount on the vehicle price but then inflate the residual value percentage above what's reasonable for that lease term. This tactic makes the monthly payment look lower (because depreciation = Cap - Residual), but you're still paying the same total amount - just structured differently. <span className="font-semibold">Always verify that the residual percentage matches industry standards for your lease term</span>. For example, for a 36-month lease, the residual should typically be between 58-60% (with 60% being the standard baseline). For shorter terms like 24 months, expect 64-66%, while longer terms like 48 months should be around 52-54%. Use the "Expected Residual %" row in the comparison table above to check if your residual is reasonable. If a dealership offers a discount but the residual seems too high, they may be recouping that discount elsewhere.
+                </p>
+                {sortedCars.length > 0 && (() => {
+                  const firstCar = sortedCars[0];
+                  const expectedResidual = getExpectedResidualPercent(firstCar.leaseTerm);
+                  const minResidual = Math.max(0, expectedResidual - 2);
+                  const maxResidual = Math.min(100, expectedResidual + 2);
+                  return (
+                    <>
+                      <div className="text-xs text-yellow-900 dark:text-yellow-100 font-semibold mt-3 pt-3 border-t border-yellow-200 dark:border-yellow-700">
+                        Expected Residual Range for {firstCar.leaseTerm}-Month Lease:
+                      </div>
+                      <div className="text-xs text-yellow-800 dark:text-yellow-200 mt-1 space-y-1">
+                        <div>• Expected Residual: <span className="font-semibold">{expectedResidual.toFixed(1)}%</span></div>
+                        <div>• Acceptable Range: <span className="font-semibold">{minResidual.toFixed(1)}% - {maxResidual.toFixed(1)}%</span></div>
+                        <div>• {getCarDisplayName(firstCar)} Actual: <span className={`font-semibold ${firstCar.residualPercent >= minResidual && firstCar.residualPercent <= maxResidual ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}`}>{firstCar.residualPercent.toFixed(1)}%</span></div>
+                        <div className="text-[10px] text-yellow-700 dark:text-yellow-300 mt-2 italic">
+                          Residual values within ±2% of expected are considered reasonable. Values significantly outside this range may indicate manipulation.
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              <div className="bg-pink-50 dark:bg-pink-900/20 rounded-lg p-4 border border-pink-200 dark:border-pink-800">
+                <h3 className="text-sm font-bold text-pink-900 dark:text-pink-100 mb-2">
+                  ⚠️ Dealership Tactic: Unnecessary Fees and Warranty Upsells
+                </h3>
+                <p className="text-xs text-pink-800 dark:text-pink-200 leading-relaxed mb-3">
+                  Dealerships may try to add various fees or pressure you into unnecessary warranty packages, extended service plans, or protection packages. These can significantly increase your total lease cost. <span className="font-semibold">Be careful and question every fee</span>. As a general guideline, <span className="font-semibold">total fees (excluding sales tax) should typically be between $500-$1,200</span>. Anything significantly higher is likely markup. Here's how to handle different types of fees:
+                </p>
+                
+                <div className="text-xs text-pink-900 dark:text-pink-100 font-semibold mt-3 pt-3 border-t border-pink-200 dark:border-pink-700 mb-2">
+                  Fees to Negotiate Aggressively (Often Overpriced):
+                </div>
+                <div className="text-xs text-pink-800 dark:text-pink-200 space-y-1 mb-3">
+                  <div>• <span className="font-semibold">Documentation Fee (Doc Fee)</span>: Often $200-$800, but actual cost is $50-$150. Negotiate this down or off completely.</div>
+                  <div>• <span className="font-semibold">Dealer Prep Fee</span>: Usually $200-$500. This is often already included in the vehicle price - negotiate to remove it.</div>
+                  <div>• <span className="font-semibold">Acquisition Fee</span>: Typically $500-$900. This is sometimes negotiable, especially if you're a repeat customer or have good credit.</div>
+                  <div>• <span className="font-semibold">Advertising Fee</span>: Usually $100-$300. This is pure profit for the dealer - negotiate to remove it entirely.</div>
+                </div>
+
+                <div className="text-xs text-pink-900 dark:text-pink-100 font-semibold mt-3 pt-3 border-t border-pink-200 dark:border-pink-700 mb-2">
+                  Fees to Negotiate Off Completely (Unnecessary):
+                </div>
+                <div className="text-xs text-pink-800 dark:text-pink-200 space-y-1 mb-3">
+                  <div>• <span className="font-semibold">VIN Etching</span>: $200-$400. This is pure profit - refuse it completely.</div>
+                  <div>• <span className="font-semibold">Paint/Fabric Protection</span>: $300-$800. These treatments are often ineffective and overpriced - decline.</div>
+                  <div>• <span className="font-semibold">Tire/Wheel Protection</span>: $400-$1,200. Usually unnecessary and expensive - skip it.</div>
+                  <div>• <span className="font-semibold">Gap Insurance</span>: Often $400-$800. Check if your insurance already covers this, or if it's included in the lease.</div>
+                  <div>• <span className="font-semibold">Credit Life/Disability Insurance</span>: $300-$600. Rarely needed - decline.</div>
+                </div>
+
+                <div className="text-xs text-pink-900 dark:text-pink-100 font-semibold mt-3 pt-3 border-t border-pink-200 dark:border-pink-700 mb-2">
+                  Fees to Totally Avoid (Scams):
+                </div>
+                <div className="text-xs text-pink-800 dark:text-pink-200 space-y-1 mb-3">
+                  <div>• <span className="font-semibold">Extended Warranty</span>: $1,500-$4,000. <span className="font-bold text-red-700 dark:text-red-300">NEVER buy extended warranty on a lease</span> - the vehicle is under manufacturer warranty for the lease term, and you don't own it at the end.</div>
+                  <div>• <span className="font-semibold">Extended Service Plans</span>: $800-$2,500. Same as extended warranty - unnecessary on leases.</div>
+                  <div>• <span className="font-semibold">Maintenance Packages</span>: $500-$1,500. You can maintain the car yourself or at any shop - don't prepay.</div>
+                  <div>• <span className="font-semibold">Theft Protection/Window Etching</span>: $200-$500. Pure markup - refuse completely.</div>
+                </div>
+
+                <div className="text-xs text-pink-900 dark:text-pink-100 font-semibold mt-3 pt-3 border-t border-pink-200 dark:border-pink-700 mb-2">
+                  Legitimate Fees (Usually Non-Negotiable):
+                </div>
+                <div className="text-xs text-pink-800 dark:text-pink-200 space-y-1">
+                  <div>• <span className="font-semibold">Tag/Title/Filing Fees</span>: $50-$400 (varies by state). These are government fees and usually non-negotiable.</div>
+                  <div>• <span className="font-semibold">Sales Tax</span>: Based on your state/local rate. Non-negotiable, but make sure they're calculating it correctly.</div>
+                  <div>• <span className="font-semibold">Registration Fees</span>: $50-$200 (varies by state). Government fees, non-negotiable.</div>
+                </div>
+
+                <p className="text-xs text-pink-800 dark:text-pink-200 leading-relaxed mt-3 pt-3 border-t border-pink-200 dark:border-pink-700">
+                  <span className="font-semibold">Remember:</span> Always ask what each fee is for. If a dealer insists on a fee, ask them to reduce the vehicle price by that amount instead. If they won't negotiate fees, walk away - there are other dealers who will.
+                </p>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
