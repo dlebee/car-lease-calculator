@@ -1,9 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
-import { marked } from 'marked';
+import { Document, Page, Text, View, StyleSheet, PDFDownloadLink, Font } from '@react-pdf/renderer';
 
 interface LeaseData {
   id: string;
@@ -27,6 +25,7 @@ interface LeaseData {
   downPayment: number; // Cash down payment
   equityTransfer: number; // Trade-in equity value
   dueAtSigning: number; // Total amount due at signing (reduces cap cost)
+  notes: string; // Notes for discussion/negotiation
 }
 
 // Legacy data structure for migration purposes - contains old fee fields that may exist in saved data
@@ -71,6 +70,7 @@ const createNewCar = (): LeaseData => ({
   downPayment: 0,
   equityTransfer: 0,
   dueAtSigning: 0,
+  notes: '',
 });
 
 export default function LeaseCalculator() {
@@ -86,6 +86,7 @@ export default function LeaseCalculator() {
   const [vinError, setVinError] = useState<string | null>(null);
   const [vinSuccess, setVinSuccess] = useState<string | null>(null);
   const [vinData, setVinData] = useState<string>('');
+  const [showDealershipModal, setShowDealershipModal] = useState(false);
 
   const [expandedSteps, setExpandedSteps] = useState({
     step1: true,
@@ -166,6 +167,9 @@ export default function LeaseCalculator() {
             if (car.vin === undefined) {
               updated = { ...updated, vin: '' };
             }
+            if (car.notes === undefined) {
+              updated = { ...updated, notes: '' };
+            }
             return updated;
           });
           const migratedSavedCars = { ...parsed, cars: migratedCars };
@@ -210,6 +214,7 @@ export default function LeaseCalculator() {
           const equityTransfer = parsed.equityTransfer !== undefined ? parsed.equityTransfer : 0;
           const dueAtSigning = parsed.dueAtSigning !== undefined ? parsed.dueAtSigning : 0;
           const vin = parsed.vin !== undefined ? parsed.vin : '';
+          const notes = parsed.notes !== undefined ? parsed.notes : '';
           const migratedCar = { 
             ...parsed, 
             id: Date.now().toString(), 
@@ -224,6 +229,7 @@ export default function LeaseCalculator() {
             equityTransfer,
             dueAtSigning,
             vin,
+            notes,
           };
           const newSavedCars = {
             cars: [migratedCar],
@@ -316,8 +322,9 @@ export default function LeaseCalculator() {
     }
   };
 
-  const handleSaveJSON = () => {
-    const jsonStr = JSON.stringify(savedCars, null, 2);
+  const handleSaveCarJSON = () => {
+    // Save only the current car, not all cars
+    const jsonStr = JSON.stringify(data, null, 2);
     const blob = new Blob([jsonStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -342,7 +349,21 @@ export default function LeaseCalculator() {
     URL.revokeObjectURL(url);
   };
 
-  const handleLoadJSON = () => {
+  const handleSaveAllCars = () => {
+    // Save all cars
+    const jsonStr = JSON.stringify(savedCars, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `all-cars-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleLoadCarJSON = () => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'application/json';
@@ -353,35 +374,192 @@ export default function LeaseCalculator() {
         reader.onload = (event) => {
           try {
             const loaded = JSON.parse(event.target?.result as string);
-            // Handle both old format (single car) and new format (multiple cars)
+            let carToAdd: LeaseData;
+            
+            // Handle different formats: single car object or old savedCars format
             if (loaded.cars && Array.isArray(loaded.cars)) {
-              setSavedCars(loaded);
+              // If it's the old savedCars format, take the first car or current car
               if (loaded.currentCarId && loaded.cars.length > 0) {
                 const currentCar = loaded.cars.find((c: LeaseData) => c.id === loaded.currentCarId);
-                if (currentCar) {
-                  setData(currentCar);
-                } else {
-                  setData(loaded.cars[0]);
-                  setSavedCars((prev) => ({ ...prev, currentCarId: loaded.cars[0].id }));
-                }
+                carToAdd = currentCar || loaded.cars[0];
               } else if (loaded.cars.length > 0) {
-                setData(loaded.cars[0]);
-                setSavedCars((prev) => ({ ...prev, currentCarId: loaded.cars[0].id }));
+                carToAdd = loaded.cars[0];
+              } else {
+                alert('No car data found in the file.');
+                return;
               }
             } else {
-              // Old format - migrate
-              const discount = loaded.discount !== undefined ? loaded.discount : (1 - loaded.capCostPercent / 100) * 100;
-              const discountAmount = loaded.discountAmount !== undefined ? loaded.discountAmount : (loaded.msrp * discount) / 100;
-              const migratedCar = { ...loaded, id: Date.now().toString(), discount, discountAmount };
-              const newSavedCars = {
-                cars: [migratedCar],
+              // Single car object
+              carToAdd = loaded;
+            }
+            
+            // Migrate the car to ensure all fields exist
+            const legacyParsed = carToAdd as LegacyLeaseData;
+            const discount = carToAdd.discount !== undefined ? carToAdd.discount : 
+              (carToAdd.capCostPercent !== undefined ? (1 - carToAdd.capCostPercent / 100) * 100 : 0);
+            const discountAmount = carToAdd.discountAmount !== undefined ? carToAdd.discountAmount : 
+              (carToAdd.msrp ? (carToAdd.msrp * discount) / 100 : 0);
+            const ficoScore8 = carToAdd.ficoScore8 !== undefined ? carToAdd.ficoScore8 : 0;
+            const salesTaxPercent = carToAdd.salesTaxPercent !== undefined ? carToAdd.salesTaxPercent : 0;
+            
+            // Migrate fee structure
+            const acquisitionFee = legacyParsed.acquisitionFee || 0;
+            const documentationFee = legacyParsed.documentationFee || 0;
+            const dealerFee = legacyParsed.dealerFee || 0;
+            const titleAndDealerFees = legacyParsed.titleAndDealerFees || 0;
+            const tagTitleFilingFees = carToAdd.tagTitleFilingFees !== undefined ? carToAdd.tagTitleFilingFees :
+              (legacyParsed.titleFee || 0) + (legacyParsed.licensePlateFee || 0) + (legacyParsed.registrationFee || 0) + (titleAndDealerFees * 0.6);
+            const handlingFees = carToAdd.handlingFees !== undefined ? carToAdd.handlingFees :
+              (acquisitionFee + documentationFee + dealerFee + (titleAndDealerFees * 0.4) || 700);
+            const inspectionFee = legacyParsed.inspectionFee || 0;
+            const dispositionFee = legacyParsed.dispositionFee || 0;
+            const oldOtherFees = carToAdd.otherFees || 0;
+            const otherFees = carToAdd.otherFees !== undefined && legacyParsed.inspectionFee === undefined && legacyParsed.dispositionFee === undefined ? carToAdd.otherFees :
+              (inspectionFee + dispositionFee + oldOtherFees);
+            const downPayment = carToAdd.downPayment !== undefined ? carToAdd.downPayment : 0;
+            const equityTransfer = carToAdd.equityTransfer !== undefined ? carToAdd.equityTransfer : 0;
+            const dueAtSigning = carToAdd.dueAtSigning !== undefined ? carToAdd.dueAtSigning : 0;
+            const vin = carToAdd.vin !== undefined ? carToAdd.vin : '';
+            const notes = carToAdd.notes !== undefined ? carToAdd.notes : '';
+            
+            // Ensure car has an ID
+            const carId = carToAdd.id || Date.now().toString();
+            
+            const migratedCar: LeaseData = {
+              ...carToAdd,
+              id: carId,
+              discount,
+              discountAmount,
+              ficoScore8,
+              salesTaxPercent,
+              tagTitleFilingFees,
+              handlingFees,
+              otherFees,
+              downPayment,
+              equityTransfer,
+              dueAtSigning,
+              vin,
+              notes,
+            };
+            
+            // Add or update the car in savedCars (useEffect will save to localStorage)
+            setSavedCars((prev) => {
+              const existingIndex = prev.cars.findIndex((c) => c.id === migratedCar.id);
+              let updatedCars: LeaseData[];
+              
+              if (existingIndex >= 0) {
+                // Update existing car
+                updatedCars = prev.cars.map((c, idx) => idx === existingIndex ? migratedCar : c);
+              } else {
+                // Add new car
+                updatedCars = [...prev.cars, migratedCar];
+              }
+              
+              return {
+                cars: updatedCars,
                 currentCarId: migratedCar.id,
               };
-              setSavedCars(newSavedCars);
-              setData(migratedCar);
-              localStorage.setItem(STORAGE_KEY, JSON.stringify(newSavedCars));
+            });
+            
+            // Set as current car
+            setData(migratedCar);
+          } catch (error) {
+            console.error('Error loading JSON:', error);
+            alert('Failed to load JSON file. Please check the format.');
+          }
+        };
+        reader.readAsText(file);
+      }
+    };
+    input.click();
+  };
+
+  const handleLoadAllCars = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const loaded = JSON.parse(event.target?.result as string);
+            
+            // Validate that it's a savedCars format
+            if (loaded.cars && Array.isArray(loaded.cars)) {
+              // Migrate all cars to ensure they have all required fields
+              const migratedCars = loaded.cars.map((car: any) => {
+                const legacyParsed = car as LegacyLeaseData;
+                const discount = car.discount !== undefined ? car.discount : 
+                  (car.capCostPercent !== undefined ? (1 - car.capCostPercent / 100) * 100 : 0);
+                const discountAmount = car.discountAmount !== undefined ? car.discountAmount : 
+                  (car.msrp ? (car.msrp * discount) / 100 : 0);
+                const ficoScore8 = car.ficoScore8 !== undefined ? car.ficoScore8 : 0;
+                const salesTaxPercent = car.salesTaxPercent !== undefined ? car.salesTaxPercent : 0;
+                
+                // Migrate fee structure
+                const acquisitionFee = legacyParsed.acquisitionFee || 0;
+                const documentationFee = legacyParsed.documentationFee || 0;
+                const dealerFee = legacyParsed.dealerFee || 0;
+                const titleAndDealerFees = legacyParsed.titleAndDealerFees || 0;
+                const tagTitleFilingFees = car.tagTitleFilingFees !== undefined ? car.tagTitleFilingFees :
+                  (legacyParsed.titleFee || 0) + (legacyParsed.licensePlateFee || 0) + (legacyParsed.registrationFee || 0) + (titleAndDealerFees * 0.6);
+                const handlingFees = car.handlingFees !== undefined ? car.handlingFees :
+                  (acquisitionFee + documentationFee + dealerFee + (titleAndDealerFees * 0.4) || 700);
+                const inspectionFee = legacyParsed.inspectionFee || 0;
+                const dispositionFee = legacyParsed.dispositionFee || 0;
+                const oldOtherFees = car.otherFees || 0;
+                const otherFees = car.otherFees !== undefined && legacyParsed.inspectionFee === undefined && legacyParsed.dispositionFee === undefined ? car.otherFees :
+                  (inspectionFee + dispositionFee + oldOtherFees);
+                const downPayment = car.downPayment !== undefined ? car.downPayment : 0;
+                const equityTransfer = car.equityTransfer !== undefined ? car.equityTransfer : 0;
+                const dueAtSigning = car.dueAtSigning !== undefined ? car.dueAtSigning : 0;
+                const vin = car.vin !== undefined ? car.vin : '';
+                const notes = car.notes !== undefined ? car.notes : '';
+                
+                // Ensure car has an ID
+                const carId = car.id || Date.now().toString() + Math.random().toString(36).substr(2, 9);
+                
+                return {
+                  ...car,
+                  id: carId,
+                  discount,
+                  discountAmount,
+                  ficoScore8,
+                  salesTaxPercent,
+                  tagTitleFilingFees,
+                  handlingFees,
+                  otherFees,
+                  downPayment,
+                  equityTransfer,
+                  dueAtSigning,
+                  vin,
+                  notes,
+                } as LeaseData;
+              });
+              
+              const currentCarId = loaded.currentCarId && migratedCars.some((c: LeaseData) => c.id === loaded.currentCarId)
+                ? loaded.currentCarId
+                : (migratedCars.length > 0 ? migratedCars[0].id : null);
+              
+              const updatedSavedCars = {
+                cars: migratedCars,
+                currentCarId,
+              };
+              
+              setSavedCars(updatedSavedCars);
+              if (currentCarId && migratedCars.length > 0) {
+                const currentCar = migratedCars.find((c: LeaseData) => c.id === currentCarId);
+                if (currentCar) {
+                  setData(currentCar);
+                }
+              }
+            } else {
+              alert('Invalid file format. Expected a file with cars array.');
             }
           } catch (error) {
+            console.error('Error loading JSON:', error);
             alert('Failed to load JSON file. Please check the format.');
           }
         };
@@ -543,130 +721,444 @@ export default function LeaseCalculator() {
     return markdown;
   };
 
-  const handleExportPDF = async () => {
-    if (!summaryRef.current) {
-      alert('Please expand Step 5: Complete Summary to export PDF');
-      return;
-    }
+  const handleExportPDFClick = () => {
+    setShowDealershipModal(true);
+  };
 
+  const handleExportPDF = async (isForDealership: boolean) => {
+    setShowDealershipModal(false);
     try {
-      // Ensure the summary section is expanded
-      if (!expandedSteps.step5) {
-        setExpandedSteps((prev) => ({ ...prev, step5: true }));
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-
-      const element = summaryRef.current;
+      const carName = getCarDisplayName(data);
+      const currentRate = paymentData.rates.find(r => Math.abs(r.apr - paymentData.currentApr) < 0.01);
+      const monthlyPayment = currentRate?.totalMonthlyPayment || 0;
       
-      if (!element || element.offsetHeight === 0) {
-        alert('Summary section is not visible. Please ensure Step 5 is expanded.');
-        return;
-      }
-
-      // Scroll element into view
-      element.scrollIntoView({ behavior: 'instant', block: 'start' });
-      await new Promise(resolve => setTimeout(resolve, 200));
+      const formatCurrency = (amount: number) => 
+        `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
       
-      // Capture the Step 5 summary element directly
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#ffffff',
-        logging: false,
-        width: element.scrollWidth,
-        height: element.scrollHeight,
-        windowWidth: element.scrollWidth,
-        windowHeight: element.scrollHeight,
-        scrollX: 0,
-        scrollY: 0,
-        onclone: (clonedDoc) => {
-          // Inject CSS to ensure colors are RGB and improve styling
-          const style = clonedDoc.createElement('style');
-          style.textContent = `
-            * {
-              color: rgb(17, 24, 39) !important;
-            }
-            .bg-white { background-color: rgb(255, 255, 255) !important; }
-            .bg-gray-50 { background-color: rgb(249, 250, 251) !important; }
-            .bg-gray-100 { background-color: rgb(243, 244, 246) !important; }
-            .bg-gray-700 { background-color: rgb(55, 65, 81) !important; }
-            .bg-gray-800 { background-color: rgb(31, 41, 55) !important; }
-            .bg-blue-50 { background-color: rgb(239, 246, 255) !important; }
-            .bg-blue-100 { background-color: rgb(219, 234, 254) !important; }
-            .bg-green-50 { background-color: rgb(240, 253, 244) !important; }
-            .bg-yellow-50 { background-color: rgb(254, 252, 232) !important; }
-            .bg-orange-50 { background-color: rgb(255, 247, 237) !important; }
-            .bg-red-50 { background-color: rgb(254, 242, 242) !important; }
-            .text-gray-900 { color: rgb(17, 24, 39) !important; }
-            .text-gray-600 { color: rgb(75, 85, 99) !important; }
-            .text-gray-500 { color: rgb(107, 114, 128) !important; }
-            .text-gray-400 { color: rgb(156, 163, 175) !important; }
-            .text-white { color: rgb(255, 255, 255) !important; }
-            .text-blue-600 { color: rgb(37, 99, 235) !important; }
-            .text-blue-400 { color: rgb(96, 165, 250) !important; }
-            .text-green-600 { color: rgb(22, 163, 74) !important; }
-            .border-gray-300 { border-color: rgb(209, 213, 219) !important; }
-            .border-gray-600 { border-color: rgb(75, 85, 99) !important; }
-            .border-gray-700 { border-color: rgb(55, 65, 81) !important; }
-            .border-green-300 { border-color: rgb(134, 239, 172) !important; }
-            .border-green-700 { border-color: rgb(21, 128, 61) !important; }
-            .border-blue-300 { border-color: rgb(147, 197, 253) !important; }
-            .border-blue-700 { border-color: rgb(29, 78, 216) !important; }
-            .border-yellow-300 { border-color: rgb(253, 224, 71) !important; }
-            .border-yellow-700 { border-color: rgb(161, 98, 7) !important; }
-            .border-orange-300 { border-color: rgb(253, 186, 116) !important; }
-            .border-orange-700 { border-color: rgb(194, 65, 12) !important; }
-            .border-red-300 { border-color: rgb(252, 165, 165) !important; }
-            .border-red-700 { border-color: rgb(185, 28, 28) !important; }
-          `;
-          clonedDoc.head.appendChild(style);
+      // Define PDF styles - font sizes 1.5x bigger
+      const styles = StyleSheet.create({
+        page: {
+          padding: 40,
+          fontSize: 8.25,
+          fontFamily: 'Helvetica',
+          backgroundColor: '#ffffff',
+        },
+        header: {
+          marginBottom: 15,
+          paddingBottom: 8,
+          borderBottom: '2px solid #3b82f6',
+          textAlign: 'center',
+        },
+        title: {
+          fontSize: 18,
+          fontWeight: 'bold',
+          marginBottom: 4,
+          color: '#111827',
+        },
+        subtitle: {
+          fontSize: 7.5,
+          color: '#6b7280',
+        },
+        section: {
+          marginBottom: 12,
+        },
+        sectionTitle: {
+          fontSize: 12,
+          fontWeight: 'bold',
+          marginBottom: 6,
+          paddingBottom: 4,
+          borderBottom: '1px solid #e5e7eb',
+          color: '#111827',
+        },
+        row: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          paddingVertical: 3,
+          borderBottom: '1px solid #f3f4f6',
+        },
+        rowLast: {
+          borderBottom: 'none',
+        },
+        label: {
+          fontSize: 8.25,
+          color: '#4b5563',
+          fontWeight: 'medium',
+        },
+        value: {
+          fontSize: 8.25,
+          color: '#111827',
+          fontWeight: 'bold',
+          textAlign: 'right',
+        },
+        box: {
+          backgroundColor: '#f9fafb',
+          padding: 8,
+          borderRadius: 2,
+          border: '1px solid #e5e7eb',
+          marginBottom: 8,
+        },
+        total: {
+          fontSize: 9,
+          fontWeight: 'bold',
+          color: '#2563eb',
+          paddingTop: 4,
+          borderTop: '1px solid #d1d5db',
+        },
+        list: {
+          marginTop: 5,
+          paddingLeft: 10,
+        },
+        listItem: {
+          fontSize: 7.5,
+          color: '#374151',
+          marginBottom: 2,
+          lineHeight: 1.4,
+        },
+        footer: {
+          marginTop: 15,
+          paddingTop: 8,
+          borderTop: '1px solid #e5e7eb',
+          textAlign: 'center',
+          fontSize: 6.75,
+          color: '#6b7280',
         },
       });
       
-      // Create PDF
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4',
-      });
+      // Create PDF document with page breaks
+      const LeasePDF = ({ isForDealership }: { isForDealership: boolean }) => (
+        <Document>
+          {/* Page 1: Header, Vehicle Information, Lease Terms & Financials, Fees & Payments */}
+          <Page size="A4" style={styles.page}>
+            {/* Header */}
+            <View style={styles.header}>
+              <Text style={styles.title}>Lease Summary: {carName}</Text>
+              <Text style={styles.subtitle}>
+                Generated: {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}
+              </Text>
+            </View>
+            
+            {/* Vehicle Information */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Vehicle Information</Text>
+              <View style={styles.row}>
+                <Text style={styles.label}>Make:</Text>
+                <Text style={styles.value}>{data.carMake || 'N/A'}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.label}>Model:</Text>
+                <Text style={styles.value}>{data.carModel || 'N/A'}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.label}>Tier:</Text>
+                <Text style={styles.value}>{data.carTier || 'N/A'}</Text>
+              </View>
+              {data.vin && (
+                <View style={styles.row}>
+                  <Text style={styles.label}>VIN:</Text>
+                  <Text style={[styles.value, { fontFamily: 'Courier' }]}>{data.vin}</Text>
+                </View>
+              )}
+              <View style={[styles.row, styles.rowLast]}>
+                <Text style={styles.label}>MSRP:</Text>
+                <Text style={styles.value}>{formatCurrency(data.msrp)}</Text>
+              </View>
+            </View>
+            
+            {/* Lease Terms & Financials */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Lease Terms & Financials</Text>
+              <View style={styles.row}>
+                <Text style={styles.label}>Lease Term:</Text>
+                <Text style={styles.value}>{data.leaseTerm} months</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.label}>Discount:</Text>
+                <Text style={styles.value}>{data.discount ? `-${data.discount.toFixed(1)}%` : '0%'}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.label}>Base Cap Cost:</Text>
+                <Text style={styles.value}>
+                  {formatCurrency(paymentData.baseCapCost)} ({data.capCostPercent.toFixed(2)}%)
+                </Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.label}>Residual Value:</Text>
+                <Text style={styles.value}>
+                  {formatCurrency(paymentData.residualValue)} ({data.residualPercent}%)
+                </Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.label}>Depreciation:</Text>
+                <Text style={styles.value}>{formatCurrency(paymentData.depreciation)}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.label}>APR:</Text>
+                <Text style={styles.value}>
+                  {paymentData.currentApr > 0 ? `${paymentData.currentApr.toFixed(2)}%` : 'N/A'}
+                </Text>
+              </View>
+              {data.marketFactor > 0 && (
+                <View style={styles.row}>
+                  <Text style={styles.label}>Money Factor:</Text>
+                  <Text style={styles.value}>{data.marketFactor.toFixed(4)}</Text>
+                </View>
+              )}
+              {data.salesTaxPercent > 0 && (
+                <View style={styles.row}>
+                  <Text style={styles.label}>Sales Tax:</Text>
+                  <Text style={styles.value}>{data.salesTaxPercent}%</Text>
+                </View>
+              )}
+              {data.ficoScore8 > 0 && (
+                <View style={[styles.row, styles.rowLast]}>
+                  <Text style={styles.label}>FICO Score 8:</Text>
+                  <Text style={styles.value}>{data.ficoScore8} ({getFicoRecommendations().tier})</Text>
+                </View>
+              )}
+            </View>
+            
+            {/* Fees & Payments */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Fees & Payments</Text>
+              <View style={styles.box}>
+                <View style={styles.row}>
+                  <Text style={styles.label}>Tag/Title/Filing Fees:</Text>
+                  <Text style={styles.value}>{formatCurrency(data.tagTitleFilingFees || 0)}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={styles.label}>Handling Fees:</Text>
+                  <Text style={styles.value}>{formatCurrency(data.handlingFees || 0)}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={styles.label}>Other Fees:</Text>
+                  <Text style={styles.value}>{formatCurrency(data.otherFees || 0)}</Text>
+                </View>
+                <View style={[styles.row, styles.total]}>
+                  <Text style={styles.total}>Total Fees:</Text>
+                  <Text style={styles.total}>{formatCurrency(paymentData.totalFees)}</Text>
+                </View>
+              </View>
+              <View style={styles.box}>
+                <View style={styles.row}>
+                  <Text style={styles.label}>Down Payment:</Text>
+                  <Text style={styles.value}>{formatCurrency(data.downPayment || 0)}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={styles.label}>Equity Transfer:</Text>
+                  <Text style={styles.value}>{formatCurrency(data.equityTransfer || 0)}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={styles.label}>Due at Signing:</Text>
+                  <Text style={styles.value}>{formatCurrency(data.dueAtSigning || 0)}</Text>
+                </View>
+                <View style={[styles.row, styles.total]}>
+                  <Text style={styles.total}>Total Down Payment:</Text>
+                  <Text style={styles.total}>{formatCurrency(paymentData.totalDownPayment)}</Text>
+                </View>
+                                    <View style={[styles.row, { marginTop: 4, paddingTop: 4, borderTop: '1px solid #d1d5db' }]}>
+                                        <Text style={[styles.label, { fontSize: 9, fontWeight: 'bold' }]}>Adjusted Cap Cost:</Text>
+                                        <Text style={[styles.value, { fontSize: 9 }]}>{formatCurrency(paymentData.adjustedCapCost)}</Text>
+                                    </View>
+                                    {data.salesTaxPercent > 0 && (
+                                        <View style={[styles.row, styles.rowLast]}>
+                                            <Text style={[styles.label, { fontSize: 9 }]}>Adjusted Cap Cost (with {data.salesTaxPercent}% tax):</Text>
+                                            <Text style={[styles.value, { fontSize: 9 }]}>{formatCurrency(paymentData.adjustedCapCost * (1 + data.salesTaxPercent / 100))}</Text>
+                                        </View>
+                                    )}
+              </View>
+            </View>
+          </Page>
+          
+          {/* Page 2: Monthly Payment Breakdown, Payment Schedule, Credit Score Recommendations, Notes, Footer */}
+          <Page size="A4" style={styles.page}>
+            {/* Monthly Payment Breakdown */}
+            {currentRate && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Monthly Payment Breakdown</Text>
+                <View style={styles.box}>
+                  <View style={styles.row}>
+                    <Text style={styles.label}>Monthly Depreciation:</Text>
+                    <Text style={styles.value}>{formatCurrency(currentRate.monthlyDepreciation)}</Text>
+                  </View>
+                  <View style={styles.row}>
+                    <Text style={styles.label}>Monthly Finance Charge:</Text>
+                    <Text style={styles.value}>{formatCurrency(currentRate.monthlyFinanceCharge)}</Text>
+                  </View>
+                  <View style={styles.row}>
+                    <Text style={styles.label}>Base Monthly Payment:</Text>
+                    <Text style={styles.value}>{formatCurrency(currentRate.baseMonthlyPayment)}</Text>
+                  </View>
+                  {data.salesTaxPercent > 0 && (
+                    <View style={styles.row}>
+                      <Text style={styles.label}>Sales Tax ({data.salesTaxPercent}%):</Text>
+                      <Text style={styles.value}>
+                        {formatCurrency(currentRate.baseMonthlyPayment * (data.salesTaxPercent / 100))}
+                      </Text>
+                    </View>
+                  )}
+                  <View style={[styles.row, styles.total]}>
+                    <Text style={styles.total}>Total Monthly Payment:</Text>
+                    <Text style={styles.total}>{formatCurrency(currentRate.totalMonthlyPayment)}</Text>
+                  </View>
+                </View>
+              </View>
+            )}
+            
+            {/* Payment Schedule */}
+            {currentRate && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Payment Schedule</Text>
+                <View style={styles.box}>
+                  {(() => {
+                    const leaseTerm = data.leaseTerm;
+                    const baseMonthlyPayment = currentRate.baseMonthlyPayment;
+                    const periods: Array<{ label: string; months: number; baseTotal: number; totalWithTax: number }> = [];
+                    
+                    periods.push({
+                      label: 'First 12 months',
+                      months: Math.min(12, leaseTerm),
+                      baseTotal: baseMonthlyPayment * Math.min(12, leaseTerm),
+                      totalWithTax: monthlyPayment * Math.min(12, leaseTerm)
+                    });
+                    
+                    if (leaseTerm > 12) {
+                      periods.push({
+                        label: 'Second 12 months',
+                        months: Math.min(12, leaseTerm - 12),
+                        baseTotal: baseMonthlyPayment * Math.min(12, leaseTerm - 12),
+                        totalWithTax: monthlyPayment * Math.min(12, leaseTerm - 12)
+                      });
+                    }
+                    
+                    if (leaseTerm > 24) {
+                      periods.push({
+                        label: 'Third 12 months',
+                        months: Math.min(12, leaseTerm - 24),
+                        baseTotal: baseMonthlyPayment * Math.min(12, leaseTerm - 24),
+                        totalWithTax: monthlyPayment * Math.min(12, leaseTerm - 24)
+                      });
+                    }
+                    
+                    const remainingMonths = leaseTerm % 12;
+                    if (remainingMonths > 0 && leaseTerm > 12) {
+                      periods.push({
+                        label: `Remaining ${remainingMonths} month${remainingMonths > 1 ? 's' : ''}`,
+                        months: remainingMonths,
+                        baseTotal: baseMonthlyPayment * remainingMonths,
+                        totalWithTax: monthlyPayment * remainingMonths
+                      });
+                    }
+                    
+                    return periods.map((period, idx) => (
+                      <View key={idx} style={{ marginBottom: 6 }}>
+                        <View style={styles.row}>
+                          <Text style={styles.label}>
+                            {period.label} ({period.months} months):
+                          </Text>
+                        </View>
+                        <View style={[styles.row, { paddingLeft: 10 }]}>
+                          <Text style={styles.label}>Without tax:</Text>
+                          <Text style={styles.value}>{formatCurrency(period.baseTotal)}</Text>
+                        </View>
+                        {data.salesTaxPercent > 0 && (
+                          <View style={[styles.row, { paddingLeft: 10 }]}>
+                            <Text style={styles.label}>With {data.salesTaxPercent}% tax:</Text>
+                            <Text style={[styles.value, { color: '#2563eb', fontWeight: 'bold' }]}>{formatCurrency(period.totalWithTax)}</Text>
+                          </View>
+                        )}
+                      </View>
+                    ));
+                  })()}
+                  <View style={[styles.row, styles.total, { marginTop: 8, paddingTop: 8, borderTop: '1px solid #d1d5db' }]}>
+                    <Text style={styles.total}>Total Lease Cost ({data.leaseTerm} months):</Text>
+                  </View>
+                  <View style={[styles.row, { paddingLeft: 10 }]}>
+                    <Text style={styles.label}>Without tax:</Text>
+                    <Text style={styles.value}>{formatCurrency(currentRate.baseMonthlyPayment * data.leaseTerm)}</Text>
+                  </View>
+                  {data.salesTaxPercent > 0 && (
+                    <View style={[styles.row, { paddingLeft: 10 }]}>
+                      <Text style={styles.label}>With {data.salesTaxPercent}% tax:</Text>
+                      <Text style={[styles.value, { color: '#2563eb', fontWeight: 'bold' }]}>{formatCurrency(monthlyPayment * data.leaseTerm)}</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            )}
+            
+            {/* FICO Recommendations - excluded when exporting for dealership */}
+            {!isForDealership && data.ficoScore8 > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Credit Score Recommendations</Text>
+                <View style={styles.box}>
+                  {(() => {
+                    const ficoRec = getFicoRecommendations();
+                    return (
+                      <>
+                        <View style={styles.row}>
+                          <Text style={styles.label}>Credit Tier:</Text>
+                          <Text style={styles.value}>{ficoRec.tier} ({data.ficoScore8})</Text>
+                        </View>
+                        <View style={styles.row}>
+                          <Text style={styles.label}>Approval Likelihood:</Text>
+                          <Text style={styles.value}>{ficoRec.approvalLikelihood}</Text>
+                        </View>
+                        <View style={styles.row}>
+                          <Text style={styles.label}>Expected APR Range:</Text>
+                          <Text style={styles.value}>{ficoRec.expectedAprRange}</Text>
+                        </View>
+                        <View style={styles.row}>
+                          <Text style={styles.label}>Expected Money Factor Range:</Text>
+                          <Text style={styles.value}>{ficoRec.expectedMoneyFactorRange}</Text>
+                        </View>
+                        <View style={{ marginTop: 5, paddingTop: 5, borderTop: '1px solid #e5e7eb' }}>
+                          <Text style={[styles.label, { fontSize: 9, fontWeight: 'bold', marginBottom: 4 }]}>
+                            Key Recommendations:
+                          </Text>
+                          <View style={styles.list}>
+                            {ficoRec.recommendations.map((rec, idx) => (
+                              <Text key={idx} style={styles.listItem}>
+                                • {rec}
+                              </Text>
+                            ))}
+                          </View>
+                        </View>
+                      </>
+                    );
+                  })()}
+                </View>
+              </View>
+            )}
+            
+            {/* Notes - excluded when exporting for dealership */}
+            {!isForDealership && data.notes && data.notes.trim() && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Notes</Text>
+                <View style={styles.box}>
+                  {data.notes.split('\n').map((line, idx) => (
+                    <Text key={idx} style={[styles.label, { fontSize: 8.25, lineHeight: 1.5, marginBottom: idx < data.notes.split('\n').length - 1 ? 2 : 0 }]}>
+                      {line || ' '}
+                    </Text>
+                  ))}
+                </View>
+              </View>
+            )}
+            
+            {/* Footer */}
+            <View style={styles.footer}>
+              <Text>This document was generated by Car Lease Calculator</Text>
+            </View>
+          </Page>
+        </Document>
+      );
       
-      // Get page dimensions
-      const pdfWidth = (pdf.internal?.pageSize?.width) ?? 210;
-      const pdfHeight = (pdf.internal?.pageSize?.height) ?? 297;
+      // Generate and download PDF
+      const { pdf } = await import('@react-pdf/renderer');
+      const blob = await pdf(<LeasePDF isForDealership={isForDealership} />).toBlob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
       
-      // Define margins (generous margins for better appearance)
-      const marginLeft = 20;
-      const marginRight = 20;
-      const marginTop = 25;
-      const marginBottom = 25;
-      
-      // Calculate available space
-      const availableWidth = pdfWidth - marginLeft - marginRight;
-      const availableHeight = pdfHeight - marginTop - marginBottom;
-      
-      // Convert pixels to mm
-      const mmPerPixel = 0.264583;
-      const imgWidthMM = canvas.width * mmPerPixel;
-      const imgHeightMM = canvas.height * mmPerPixel;
-      
-      // Calculate scaling to fit
-      const widthRatio = availableWidth / imgWidthMM;
-      const heightRatio = availableHeight / imgHeightMM;
-      const ratio = Math.min(widthRatio, heightRatio, 1);
-      
-      const imgScaledWidth = imgWidthMM * ratio;
-      const imgScaledHeight = imgHeightMM * ratio;
-      
-      // Center horizontally
-      const xOffset = marginLeft + (availableWidth - imgScaledWidth) / 2;
-      
-      // Add image to PDF
-      const imgData = canvas.toDataURL('image/png', 1.0);
-      pdf.addImage(imgData, 'PNG', xOffset, marginTop, imgScaledWidth, imgScaledHeight);
-      
-      // Generate filename
-      const carName = getCarDisplayName(data);
       const sanitizedName = carName
         .replace(/[^a-zA-Z0-9]/g, '-')
         .replace(/-+/g, '-')
@@ -674,7 +1166,16 @@ export default function LeaseCalculator() {
         .toLowerCase() || 'car';
       const uniqueId = data.id || Date.now();
       
-      pdf.save(`${sanitizedName}-summary-${uniqueId}.pdf`);
+      // Use different filename for dealership exports
+      const filename = isForDealership
+        ? `${sanitizedName}-dealership-${uniqueId}.pdf`
+        : `${sanitizedName}-summary-${uniqueId}.pdf`;
+      
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Error generating PDF:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -1106,18 +1607,34 @@ export default function LeaseCalculator() {
               Delete
             </button>
           )}
-          <div className="flex gap-2 md:ml-auto">
+          <div className="flex flex-wrap gap-2 md:ml-auto">
             <button
-              onClick={handleSaveJSON}
+              onClick={handleSaveCarJSON}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+              title="Save current car to JSON file"
             >
-              Save as JSON
+              Save Car to JSON
             </button>
             <button
-              onClick={handleLoadJSON}
+              onClick={handleLoadCarJSON}
               className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors whitespace-nowrap"
+              title="Load a car from JSON file and add it"
             >
-              Load JSON
+              Load Car from JSON
+            </button>
+            <button
+              onClick={handleSaveAllCars}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+              title="Save all cars to JSON file"
+            >
+              Save All Cars
+            </button>
+            <button
+              onClick={handleLoadAllCars}
+              className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors whitespace-nowrap"
+              title="Load all cars from JSON file"
+            >
+              Load All Cars
             </button>
           </div>
         </div>
@@ -1782,6 +2299,11 @@ export default function LeaseCalculator() {
                       ({data.discount ? `-${data.discount.toFixed(1)}%` : '0%'} discount)
                     </span>
                   </p>
+                  {data.salesTaxPercent > 0 && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      With {data.salesTaxPercent}% tax: ${(paymentData.adjustedCapCost * (1 + data.salesTaxPercent / 100)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <span className="text-gray-600 dark:text-gray-400">Residual Value:</span>
@@ -1817,7 +2339,10 @@ export default function LeaseCalculator() {
                       Monthly Finance Charge ($)
                     </th>
                     <th className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-left text-gray-900 dark:text-white">
-                      Total Monthly Payment ($)
+                      Base Monthly Payment (without tax) ($)
+                    </th>
+                    <th className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-left text-gray-900 dark:text-white">
+                      Total Monthly Payment {data.salesTaxPercent > 0 ? `(with ${data.salesTaxPercent}% tax)` : ''} ($)
                     </th>
                   </tr>
                 </thead>
@@ -1853,6 +2378,9 @@ export default function LeaseCalculator() {
                         </td>
                         <td className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-gray-900 dark:text-white">
                           ${rate.monthlyFinanceCharge.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-gray-900 dark:text-white">
+                          ${rate.baseMonthlyPayment.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                         <td className="border border-gray-300 dark:border-gray-600 px-4 py-2 font-semibold text-gray-900 dark:text-white">
                           ${rate.totalMonthlyPayment.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1987,7 +2515,7 @@ export default function LeaseCalculator() {
           <div className="px-6 pb-6">
             <div className="mb-4 flex justify-end">
               <button
-                onClick={handleExportPDF}
+                onClick={handleExportPDFClick}
                 className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2032,7 +2560,7 @@ export default function LeaseCalculator() {
                   <div className="flex justify-between">
                     <span className="text-gray-600 dark:text-gray-400">Base Cap Cost:</span>
                     <span className="font-medium text-gray-900 dark:text-white">
-                      ${paymentData.baseCapCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({data.capCostPercent}%)
+                      ${paymentData.baseCapCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({data.capCostPercent.toFixed(2)}%)
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -2068,6 +2596,14 @@ export default function LeaseCalculator() {
                       </span>
                     </span>
                   </div>
+                  {data.salesTaxPercent > 0 && (
+                    <div className="flex justify-between font-semibold">
+                      <span className="text-gray-900 dark:text-white">Adjusted Cap Cost (with {data.salesTaxPercent}% tax):</span>
+                      <span className="text-gray-900 dark:text-white">
+                        ${(paymentData.adjustedCapCost * (1 + data.salesTaxPercent / 100)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className="text-gray-600 dark:text-gray-400">Residual Value:</span>
                     <span className="font-medium text-gray-900 dark:text-white">
@@ -2157,7 +2693,7 @@ export default function LeaseCalculator() {
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-600 dark:text-gray-400">Base Monthly Payment:</span>
+                    <span className="text-gray-600 dark:text-gray-400">Base Monthly Payment (without tax):</span>
                     <span className="font-medium text-gray-900 dark:text-white">
                       ${paymentData.rates.find(r => Math.abs(r.apr - paymentData.currentApr) < 0.01)?.baseMonthlyPayment.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
                     </span>
@@ -2171,23 +2707,27 @@ export default function LeaseCalculator() {
                     </div>
                   )}
                   <div className="flex justify-between text-lg font-bold pt-2 border-t border-gray-300 dark:border-gray-600">
-                    <span className="text-gray-900 dark:text-white">Total Monthly Payment:</span>
+                    <span className="text-gray-900 dark:text-white">Total Monthly Payment {data.salesTaxPercent > 0 ? `(with ${data.salesTaxPercent}% tax)` : ''}:</span>
                     <span className="text-blue-600 dark:text-blue-400">
                       ${paymentData.rates.find(r => Math.abs(r.apr - paymentData.currentApr) < 0.01)?.totalMonthlyPayment.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
                     </span>
                   </div>
-                  <div className="pt-2 border-t border-gray-300 dark:border-gray-600">
+                  <div className="pt-4 border-t border-gray-300 dark:border-gray-600">
+                    <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Payment Schedule</h4>
                     <div className="space-y-2">
                       {(() => {
-                        const monthlyPayment = paymentData.rates.find(r => Math.abs(r.apr - paymentData.currentApr) < 0.01)?.totalMonthlyPayment || 0;
+                        const currentRate = paymentData.rates.find(r => Math.abs(r.apr - paymentData.currentApr) < 0.01);
+                        const baseMonthlyPayment = currentRate?.baseMonthlyPayment || 0;
+                        const totalMonthlyPayment = currentRate?.totalMonthlyPayment || 0;
                         const leaseTerm = data.leaseTerm;
-                        const periods: Array<{ label: string; months: number; total: number }> = [];
+                        const periods: Array<{ label: string; months: number; baseTotal: number; totalWithTax: number }> = [];
                         
                         // First 12 months
                         periods.push({
                           label: 'First 12 months',
                           months: Math.min(12, leaseTerm),
-                          total: monthlyPayment * Math.min(12, leaseTerm)
+                          baseTotal: baseMonthlyPayment * Math.min(12, leaseTerm),
+                          totalWithTax: totalMonthlyPayment * Math.min(12, leaseTerm)
                         });
                         
                         // Second 12 months (if lease > 12 months)
@@ -2195,7 +2735,8 @@ export default function LeaseCalculator() {
                           periods.push({
                             label: 'Second 12 months',
                             months: Math.min(12, leaseTerm - 12),
-                            total: monthlyPayment * Math.min(12, leaseTerm - 12)
+                            baseTotal: baseMonthlyPayment * Math.min(12, leaseTerm - 12),
+                            totalWithTax: totalMonthlyPayment * Math.min(12, leaseTerm - 12)
                           });
                         }
                         
@@ -2204,7 +2745,8 @@ export default function LeaseCalculator() {
                           periods.push({
                             label: 'Third 12 months',
                             months: Math.min(12, leaseTerm - 24),
-                            total: monthlyPayment * Math.min(12, leaseTerm - 24)
+                            baseTotal: baseMonthlyPayment * Math.min(12, leaseTerm - 24),
+                            totalWithTax: totalMonthlyPayment * Math.min(12, leaseTerm - 24)
                           });
                         }
                         
@@ -2214,29 +2756,133 @@ export default function LeaseCalculator() {
                           periods.push({
                             label: `Remaining ${remainingMonths} month${remainingMonths > 1 ? 's' : ''}`,
                             months: remainingMonths,
-                            total: monthlyPayment * remainingMonths
+                            baseTotal: baseMonthlyPayment * remainingMonths,
+                            totalWithTax: totalMonthlyPayment * remainingMonths
                           });
                         }
                         
                         return periods.map((period, index) => (
-                          <div key={index} className="flex justify-between items-center">
-                            <span className="text-gray-600 dark:text-gray-400 text-sm">
-                              {period.label}:
-                            </span>
-                            <span className="font-semibold text-gray-900 dark:text-white">
-                              ${period.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
+                          <div key={index} className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                {period.label} ({period.months} months):
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-gray-600 dark:text-gray-400">Without tax:</span>
+                              <span className="font-medium text-gray-900 dark:text-white">
+                                ${period.baseTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            {data.salesTaxPercent > 0 && (
+                              <div className="flex justify-between text-sm">
+                                <span className="text-gray-600 dark:text-gray-400">With {data.salesTaxPercent}% tax:</span>
+                                <span className="font-semibold text-blue-600 dark:text-blue-400">
+                                  ${period.totalWithTax.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         ));
                       })()}
+                      <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg mt-3 border border-blue-200 dark:border-blue-800">
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                            Total Lease Cost ({data.leaseTerm} months):
+                          </span>
+                        </div>
+                        {(() => {
+                          const currentRate = paymentData.rates.find(r => Math.abs(r.apr - paymentData.currentApr) < 0.01);
+                          const baseTotal = (currentRate?.baseMonthlyPayment || 0) * data.leaseTerm;
+                          const totalWithTax = (currentRate?.totalMonthlyPayment || 0) * data.leaseTerm;
+                          return (
+                            <>
+                              <div className="flex justify-between text-sm">
+                                <span className="text-gray-700 dark:text-gray-300">Without tax:</span>
+                                <span className="font-medium text-gray-900 dark:text-white">
+                                  ${baseTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              </div>
+                              {data.salesTaxPercent > 0 && (
+                                <div className="flex justify-between text-sm">
+                                  <span className="text-gray-700 dark:text-gray-300">With {data.salesTaxPercent}% tax:</span>
+                                  <span className="font-bold text-blue-600 dark:text-blue-400">
+                                    ${totalWithTax.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
             )}
+            
+            {/* Notes Section */}
+            <div className="mt-6">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Notes
+              </label>
+              <textarea
+                value={data.notes || ''}
+                onChange={(e) => handleInputChange('notes', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                placeholder="Enter notes for discussion, negotiation points, or any other relevant information..."
+                rows={6}
+              />
+            </div>
           </div>
         )}
       </div>
+
+      {/* Dealership Export Modal */}
+      {showDealershipModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+            <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+              Export PDF for Dealership?
+            </h3>
+            <p className="text-gray-700 dark:text-gray-300 mb-6">
+              Are you exporting this PDF for a dealership?
+            </p>
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
+              <p className="text-sm font-semibold text-blue-900 dark:text-blue-200 mb-2">
+                Selecting "Yes" will exclude:
+              </p>
+              <ul className="list-disc list-inside text-sm text-blue-800 dark:text-blue-300 space-y-1">
+                <li>Credit Score Recommendations</li>
+                <li>Notes</li>
+              </ul>
+              <p className="text-sm text-blue-800 dark:text-blue-300 mt-2">
+                Selecting "No" will include all sections.
+              </p>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowDealershipModal(false)}
+                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleExportPDF(false)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                No, Include All
+              </button>
+              <button
+                onClick={() => handleExportPDF(true)}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              >
+                Yes, For Dealership
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
