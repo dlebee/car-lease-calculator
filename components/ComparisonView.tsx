@@ -536,6 +536,125 @@ export default function ComparisonView() {
                   </tr>
                 </>
               )}
+
+              {/* Most Important Info */}
+              <tr className="bg-yellow-50 dark:bg-yellow-900/20">
+                <td colSpan={sortedCars.length + 1} className="p-2 font-bold text-gray-900 dark:text-white">Most Important Info</td>
+              </tr>
+              <tr className="border-b border-gray-200 dark:border-gray-700 bg-yellow-50 dark:bg-yellow-900/20">
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700">MSRP</td>
+                {sortedCars.map((car) => (
+                  <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">{formatCurrency(car.msrp)}</td>
+                ))}
+              </tr>
+              <tr className="border-b border-gray-200 dark:border-gray-700 bg-yellow-50 dark:bg-yellow-900/20">
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700">CAP Amount</td>
+                {sortedCars.map((car) => {
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
+                  const discount = car.discount || 0;
+                  const discountAmount = car.discountAmount || 0;
+                  return (
+                    <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">
+                      {formatCurrency(payments.baseCapCost)}
+                      {discount > 0 && (
+                        <span className="text-gray-600 dark:text-gray-400 ml-2">
+                          ({discount.toFixed(1)}%, {formatCurrency(discountAmount)})
+                        </span>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+              <tr className="border-b border-gray-200 dark:border-gray-700 bg-yellow-50 dark:bg-yellow-900/20">
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700">Residual Value</td>
+                {sortedCars.map((car) => {
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
+                  return (
+                    <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">
+                      {formatCurrency(payments.residualValue)}
+                      <span className="text-gray-600 dark:text-gray-400 ml-2">({car.residualPercent.toFixed(1)}%)</span>
+                    </td>
+                  );
+                })}
+              </tr>
+              <tr className="border-b border-gray-200 dark:border-gray-700 bg-yellow-50 dark:bg-yellow-900/20">
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700">Total Fees</td>
+                {sortedCars.map((car) => {
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
+                  const tagTitleFiling = car.tagTitleFilingFees || 0;
+                  const handling = car.handlingFees || 0;
+                  const other = car.otherFees || 0;
+                  const tooltipText = `Tag/Title/Filing: ${formatCurrency(tagTitleFiling)}\nHandling: ${formatCurrency(handling)}\nOther: ${formatCurrency(other)}`;
+                  return (
+                    <td 
+                      key={car.id} 
+                      className="p-3 text-center text-gray-900 dark:text-white font-semibold cursor-help" 
+                      title={tooltipText}
+                    >
+                      {formatCurrency(payments.totalFees)}
+                    </td>
+                  );
+                })}
+              </tr>
+              <tr className="border-b border-gray-200 dark:border-gray-700 bg-yellow-50 dark:bg-yellow-900/20">
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700">Down Payment</td>
+                {sortedCars.map((car) => {
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
+                  return (
+                    <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white font-semibold">{formatCurrency(payments.totalDownPayment)}</td>
+                  );
+                })}
+              </tr>
+              <tr className="border-b border-gray-200 dark:border-gray-700 bg-yellow-50 dark:bg-yellow-900/20">
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700">Suggested Cap with Fees and Taxes</td>
+                {sortedCars.map((car) => {
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
+                  return (
+                    <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white font-semibold">{formatCurrency(payments.adjustedCapCostWithTax)}</td>
+                  );
+                })}
+              </tr>
+              <tr className="border-b border-gray-200 dark:border-gray-700 bg-yellow-50 dark:bg-yellow-900/20">
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700">Monthly Payment for Depreciation</td>
+                {sortedCars.map((car) => {
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
+                  return (
+                    <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">{formatCurrency(payments.monthlyDepreciation)}</td>
+                  );
+                })}
+              </tr>
+              <tr className="border-b border-gray-200 dark:border-gray-700 bg-yellow-50 dark:bg-yellow-900/20">
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700">Monthly Payment for Finance</td>
+                {sortedCars.map((car) => {
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
+                  const apr = car.apr || (car.marketFactor ? car.marketFactor * 2400 : 0);
+                  const marketFactor = car.marketFactor || (car.apr ? car.apr / 2400 : 0);
+                  return (
+                    <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">
+                      <div>{formatCurrency(payments.monthlyFinanceCharge)}</div>
+                      <div className="text-xs text-gray-600 dark:text-gray-400">({apr.toFixed(2)}% APR, {marketFactor.toFixed(6)} MF)</div>
+                    </td>
+                  );
+                })}
+              </tr>
+              <tr className="border-b border-gray-200 dark:border-gray-700 bg-yellow-50 dark:bg-yellow-900/20">
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700">Monthly Total</td>
+                {sortedCars.map((car) => {
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
+                  return (
+                    <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white font-semibold">{formatCurrency(payments.baseMonthlyPayment)}</td>
+                  );
+                })}
+              </tr>
+              <tr className="border-b border-gray-200 dark:border-gray-700 bg-yellow-50 dark:bg-yellow-900/20">
+                <td className="p-3 font-bold text-gray-900 dark:text-white sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700">Monthly Payment Total with Taxes</td>
+                {sortedCars.map((car) => {
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
+                  return (
+                    <td key={car.id} className="p-3 text-center font-bold text-blue-600 dark:text-blue-400">{formatCurrency(payments.totalMonthlyPayment)}</td>
+                  );
+                })}
+              </tr>
             </tbody>
           </table>
         </div>
