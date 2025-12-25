@@ -8,6 +8,7 @@ interface LeaseData {
   carMake: string;
   carModel: string;
   carTier: string;
+  dealership: string;
   vin: string; // Vehicle Identification Number
   msrp: number;
   capCostPercent: number;
@@ -41,6 +42,7 @@ const createNewCar = (): LeaseData => ({
   carMake: '',
   carModel: '',
   carTier: '',
+  dealership: '',
   vin: '',
   msrp: 0,
   capCostPercent: 100,
@@ -134,6 +136,9 @@ export default function LeaseCalculator() {
             if (car.vin === undefined) {
               updated = { ...updated, vin: '' };
             }
+            if (car.dealership === undefined) {
+              updated = { ...updated, dealership: '' };
+            }
             if (car.notes === undefined) {
               updated = { ...updated, notes: '' };
             }
@@ -167,6 +172,7 @@ export default function LeaseCalculator() {
           const equityTransfer = parsed.equityTransfer !== undefined ? parsed.equityTransfer : 0;
           const dueAtSigning = parsed.dueAtSigning !== undefined ? parsed.dueAtSigning : 0;
           const vin = parsed.vin !== undefined ? parsed.vin : '';
+          const dealership = parsed.dealership !== undefined ? parsed.dealership : '';
           const notes = parsed.notes !== undefined ? parsed.notes : '';
           const migratedCar = { 
             ...parsed, 
@@ -182,6 +188,7 @@ export default function LeaseCalculator() {
             equityTransfer,
             dueAtSigning,
             vin,
+            dealership,
             notes,
           };
           const newSavedCars = {
@@ -257,6 +264,19 @@ export default function LeaseCalculator() {
       currentCarId: newCar.id,
     });
     setData(newCar);
+  };
+
+  const handleDuplicateCar = () => {
+    const duplicatedCar: LeaseData = {
+      ...data,
+      id: Date.now().toString(),
+    };
+    const updatedCars = [...savedCars.cars, duplicatedCar];
+    setSavedCars({
+      cars: updatedCars,
+      currentCarId: duplicatedCar.id,
+    });
+    setData(duplicatedCar);
   };
 
   const handleDeleteCar = () => {
@@ -360,6 +380,7 @@ export default function LeaseCalculator() {
             const equityTransfer = carToAdd.equityTransfer !== undefined ? carToAdd.equityTransfer : 0;
             const dueAtSigning = carToAdd.dueAtSigning !== undefined ? carToAdd.dueAtSigning : 0;
             const vin = carToAdd.vin !== undefined ? carToAdd.vin : '';
+            const dealership = carToAdd.dealership !== undefined ? carToAdd.dealership : '';
             const notes = carToAdd.notes !== undefined ? carToAdd.notes : '';
             
             // Ensure car has an ID
@@ -379,6 +400,7 @@ export default function LeaseCalculator() {
               equityTransfer,
               dueAtSigning,
               vin,
+              dealership,
               notes,
             };
             
@@ -443,6 +465,7 @@ export default function LeaseCalculator() {
                 const equityTransfer = car.equityTransfer !== undefined ? car.equityTransfer : 0;
                 const dueAtSigning = car.dueAtSigning !== undefined ? car.dueAtSigning : 0;
                 const vin = car.vin !== undefined ? car.vin : '';
+                const dealership = car.dealership !== undefined ? car.dealership : '';
                 const notes = car.notes !== undefined ? car.notes : '';
                 
                 // Ensure car has an ID
@@ -462,6 +485,7 @@ export default function LeaseCalculator() {
                   equityTransfer,
                   dueAtSigning,
                   vin,
+                  dealership,
                   notes,
                 } as LeaseData;
               });
@@ -518,6 +542,9 @@ export default function LeaseCalculator() {
     markdown += `| Make | ${data.carMake || 'N/A'} |\n`;
     markdown += `| Model | ${data.carModel || 'N/A'} |\n`;
     markdown += `| Tier | ${data.carTier || 'N/A'} |\n`;
+    if (data.dealership) {
+      markdown += `| Dealership | ${data.dealership} |\n`;
+    }
     if (data.vin) {
       markdown += `| VIN | ${data.vin} |\n`;
     }
@@ -779,6 +806,12 @@ export default function LeaseCalculator() {
                 <Text style={styles.label}>Tier:</Text>
                 <Text style={styles.value}>{data.carTier || 'N/A'}</Text>
               </View>
+              {data.dealership && (
+                <View style={styles.row}>
+                  <Text style={styles.label}>Dealership:</Text>
+                  <Text style={styles.value}>{data.dealership}</Text>
+                </View>
+              )}
               {data.vin && (
                 <View style={styles.row}>
                   <Text style={styles.label}>VIN:</Text>
@@ -1224,7 +1257,8 @@ export default function LeaseCalculator() {
 
   const getCarDisplayName = (car: LeaseData): string => {
     if (car.carMake && car.carModel) {
-      return `${car.carMake} ${car.carModel}${car.carTier ? ` ${car.carTier}` : ''}`;
+      const baseName = `${car.carMake} ${car.carModel}${car.carTier ? ` ${car.carTier}` : ''}`;
+      return car.dealership ? `${baseName} - ${car.dealership}` : baseName;
     }
     return 'New Car';
   };
@@ -1491,35 +1525,46 @@ export default function LeaseCalculator() {
         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
           Select Car
         </label>
-        <div className="flex flex-col md:flex-row gap-2 md:items-center">
-          <select
-            value={data.id}
-            onChange={(e) => handleCarSelect(e.target.value)}
-            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-          >
-            {savedCars.cars.map((car) => (
-              <option key={car.id} value={car.id}>
-                {getCarDisplayName(car)}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={handleAddNewCar}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
-            title="Add New Car"
-          >
-            + New Car
-          </button>
-          {savedCars.cars.length > 1 && (
-            <button
-              onClick={handleDeleteCar}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap"
-              title="Delete Current Car"
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col md:flex-row gap-2 md:items-center">
+            <select
+              value={data.id}
+              onChange={(e) => handleCarSelect(e.target.value)}
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
             >
-              Delete
-            </button>
-          )}
-          <div className="flex flex-wrap gap-2 md:ml-auto">
+              {savedCars.cars.map((car) => (
+                <option key={car.id} value={car.id}>
+                  {getCarDisplayName(car)}
+                </option>
+              ))}
+            </select>
+            <div className="flex gap-2">
+              <button
+                onClick={handleAddNewCar}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+                title="Add New Car"
+              >
+                + New Car
+              </button>
+              <button
+                onClick={handleDuplicateCar}
+                className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap"
+                title="Duplicate Current Car"
+              >
+                Duplicate Car
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {savedCars.cars.length > 1 && (
+              <button
+                onClick={handleDeleteCar}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap"
+                title="Delete Current Car"
+              >
+                Delete
+              </button>
+            )}
             <button
               onClick={handleSaveCarJSON}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
@@ -1590,6 +1635,18 @@ export default function LeaseCalculator() {
               onChange={(e) => handleInputChange('carTier', e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
               placeholder="e.g., LE, XLE"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Dealership
+            </label>
+            <input
+              type="text"
+              value={data.dealership}
+              onChange={(e) => handleInputChange('dealership', e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              placeholder="e.g., ABC Motors"
             />
           </div>
           <div>
