@@ -1007,40 +1007,25 @@ export default function LeaseCalculator() {
             {/* Payment Schedule */}
             {currentRate && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Payment Schedule</Text>
+                <Text style={styles.sectionTitle}>Per Year and Left Over Preview</Text>
                 <View style={styles.box}>
                   {(() => {
                     const leaseTerm = data.leaseTerm;
                     const baseMonthlyPayment = currentRate.baseMonthlyPayment;
                     const periods: Array<{ label: string; months: number; baseTotal: number; totalWithTax: number }> = [];
                     
+                    // Always show 12 months (or less if lease is shorter)
+                    const first12Months = Math.min(12, leaseTerm);
                     periods.push({
-                      label: 'First 12 months',
-                      months: Math.min(12, leaseTerm),
-                      baseTotal: baseMonthlyPayment * Math.min(12, leaseTerm),
-                      totalWithTax: monthlyPayment * Math.min(12, leaseTerm)
+                      label: '12 months',
+                      months: first12Months,
+                      baseTotal: baseMonthlyPayment * first12Months,
+                      totalWithTax: monthlyPayment * first12Months
                     });
                     
-                    if (leaseTerm > 12) {
-                      periods.push({
-                        label: 'Second 12 months',
-                        months: Math.min(12, leaseTerm - 12),
-                        baseTotal: baseMonthlyPayment * Math.min(12, leaseTerm - 12),
-                        totalWithTax: monthlyPayment * Math.min(12, leaseTerm - 12)
-                      });
-                    }
-                    
-                    if (leaseTerm > 24) {
-                      periods.push({
-                        label: 'Third 12 months',
-                        months: Math.min(12, leaseTerm - 24),
-                        baseTotal: baseMonthlyPayment * Math.min(12, leaseTerm - 24),
-                        totalWithTax: monthlyPayment * Math.min(12, leaseTerm - 24)
-                      });
-                    }
-                    
-                    const remainingMonths = leaseTerm % 12;
-                    if (remainingMonths > 0 && leaseTerm > 12) {
+                    // Show remaining months only if lease is not a multiple of 12
+                    if (leaseTerm > 12 && leaseTerm % 12 !== 0) {
+                      const remainingMonths = leaseTerm % 12;
                       periods.push({
                         label: `Remaining ${remainingMonths} month${remainingMonths > 1 ? 's' : ''}`,
                         months: remainingMonths,
@@ -2713,7 +2698,7 @@ export default function LeaseCalculator() {
                     </span>
                   </div>
                   <div className="pt-4 border-t border-gray-300 dark:border-gray-600">
-                    <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Payment Schedule</h4>
+                    <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Per Year and Left Over Preview</h4>
                     <div className="space-y-2">
                       {(() => {
                         const currentRate = paymentData.rates.find(r => Math.abs(r.apr - paymentData.currentApr) < 0.01);
@@ -2722,37 +2707,18 @@ export default function LeaseCalculator() {
                         const leaseTerm = data.leaseTerm;
                         const periods: Array<{ label: string; months: number; baseTotal: number; totalWithTax: number }> = [];
                         
-                        // First 12 months
+                        // Always show 12 months (or less if lease is shorter)
+                        const first12Months = Math.min(12, leaseTerm);
                         periods.push({
-                          label: 'First 12 months',
-                          months: Math.min(12, leaseTerm),
-                          baseTotal: baseMonthlyPayment * Math.min(12, leaseTerm),
-                          totalWithTax: totalMonthlyPayment * Math.min(12, leaseTerm)
+                          label: '12 months',
+                          months: first12Months,
+                          baseTotal: baseMonthlyPayment * first12Months,
+                          totalWithTax: totalMonthlyPayment * first12Months
                         });
                         
-                        // Second 12 months (if lease > 12 months)
-                        if (leaseTerm > 12) {
-                          periods.push({
-                            label: 'Second 12 months',
-                            months: Math.min(12, leaseTerm - 12),
-                            baseTotal: baseMonthlyPayment * Math.min(12, leaseTerm - 12),
-                            totalWithTax: totalMonthlyPayment * Math.min(12, leaseTerm - 12)
-                          });
-                        }
-                        
-                        // Third 12 months (if lease > 24 months)
-                        if (leaseTerm > 24) {
-                          periods.push({
-                            label: 'Third 12 months',
-                            months: Math.min(12, leaseTerm - 24),
-                            baseTotal: baseMonthlyPayment * Math.min(12, leaseTerm - 24),
-                            totalWithTax: totalMonthlyPayment * Math.min(12, leaseTerm - 24)
-                          });
-                        }
-                        
-                        // Remaining months (if lease is not a multiple of 12)
-                        const remainingMonths = leaseTerm % 12;
-                        if (remainingMonths > 0 && leaseTerm > 12) {
+                        // Show remaining months only if lease is not a multiple of 12
+                        if (leaseTerm > 12 && leaseTerm % 12 !== 0) {
+                          const remainingMonths = leaseTerm % 12;
                           periods.push({
                             label: `Remaining ${remainingMonths} month${remainingMonths > 1 ? 's' : ''}`,
                             months: remainingMonths,
