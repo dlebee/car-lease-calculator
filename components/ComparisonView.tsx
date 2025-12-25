@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   LeaseData,
   SavedCars,
@@ -25,6 +25,9 @@ export default function ComparisonView() {
       downPayment?: string;
     };
   }>({});
+  const [isEditingOverride, setIsEditingOverride] = useState(false);
+  const [lastSortedOrder, setLastSortedOrder] = useState<string[]>([]);
+  const [editingTimeout, setEditingTimeout] = useState<NodeJS.Timeout | null>(null);
 
   // Load from localStorage
   useEffect(() => {
@@ -51,14 +54,6 @@ export default function ComparisonView() {
       }
     }
   }, [savedCars.cars]);
-
-  if (savedCars.cars.length === 0) {
-    return (
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 text-center">
-        <p className="text-gray-600 dark:text-gray-400">No cars to compare. Add at least one car to use the comparison view.</p>
-      </div>
-    );
-  }
 
   const formatCurrency = (amount: number) => 
     `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -143,6 +138,20 @@ export default function ComparisonView() {
 
   // Helper to update car override
   const updateCarOverride = (carId: string, field: 'discount' | 'residualPercent' | 'apr' | 'marketFactor' | 'downPayment', value: string) => {
+    setIsEditingOverride(true);
+    
+    // Clear existing timeout
+    if (editingTimeout) {
+      clearTimeout(editingTimeout);
+    }
+    
+    // Set new timeout to reset editing flag
+    const timer = setTimeout(() => {
+      setIsEditingOverride(false);
+    }, 1500); // Wait 1.5 seconds after last change before re-sorting
+    
+    setEditingTimeout(timer);
+    
     setCarOverrides(prev => ({
       ...prev,
       [carId]: {
@@ -151,6 +160,15 @@ export default function ComparisonView() {
       },
     }));
   };
+  
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (editingTimeout) {
+        clearTimeout(editingTimeout);
+      }
+    };
+  }, [editingTimeout]);
 
   // Helper to clear car override
   const clearCarOverride = (carId: string, field: 'discount' | 'residualPercent' | 'apr' | 'marketFactor' | 'downPayment') => {
@@ -168,11 +186,104 @@ export default function ComparisonView() {
 
   // Filter to only selected cars, then sort by total monthly payment (with tax) - least expensive first
   const selectedCars = savedCars.cars.filter(car => selectedCarIds.has(car.id));
-  const sortedCars = [...selectedCars].sort((a, b) => {
-    const paymentsA = getCarPaymentsWithOverride(a, overrideDownPaymentValue, getCarOverrides(a.id));
-    const paymentsB = getCarPaymentsWithOverride(b, overrideDownPaymentValue, getCarOverrides(b.id));
-    return paymentsA.totalMonthlyPayment - paymentsB.totalMonthlyPayment;
-  });
+  
+  // Calculate sorted cars
+  const calculateSortedCars = () => {
+    return [...selectedCars].sort((a, b) => {
+      const paymentsA = getCarPaymentsWithOverride(a, overrideDownPaymentValue, getCarOverrides(a.id));
+      const paymentsB = getCarPaymentsWithOverride(b, overrideDownPaymentValue, getCarOverrides(b.id));
+      return paymentsA.totalMonthlyPayment - paymentsB.totalMonthlyPayment;
+    });
+  };
+  
+  // Helper to check if a car has any overrides
+  const hasOverride = useCallback((carId: string) => {
+    const overrides = carOverrides[carId];
+    return overrides && (
+      (overrides.discount !== undefined && overrides.discount !== '') ||
+      (overrides.residualPercent !== undefined && overrides.residualPercent !== '') ||
+      (overrides.apr !== undefined && overrides.apr !== '') ||
+      (overrides.marketFactor !== undefined && overrides.marketFactor !== '') ||
+      (overrides.downPayment !== undefined && overrides.downPayment !== '')
+    );
+  }, [carOverrides]);
+
+  // Calculate sorted cars - only sort unedited cars, keep edited ones in place
+  const sortedCars = useMemo(() => {
+    // If we have a last sorted order and some cars have overrides, maintain positions for edited cars
+    if (lastSortedOrder.length > 0 && selectedCars.some(car => hasOverride(car.id))) {
+      const orderMap = new Map(lastSortedOrder.map((id, idx) => [id, idx]));
+      
+      return [...selectedCars].sort((a, b) => {
+        const aHasOverride = hasOverride(a.id);
+        const bHasOverride = hasOverride(b.id);
+        
+        // If both have overrides, maintain their relative order from lastSortedOrder
+        if (aHasOverride && bHasOverride) {
+          const idxA = orderMap.get(a.id) ?? Infinity;
+          const idxB = orderMap.get(b.id) ?? Infinity;
+          return idxA - idxB;
+        }
+        
+        // If only one has override, maintain its position from lastSortedOrder
+        // Unedited cars will be sorted among themselves but respect edited car positions
+        if (aHasOverride) {
+          const idxA = orderMap.get(a.id) ?? Infinity;
+          const idxB = orderMap.get(b.id);
+          // If unedited car has a position, compare positions
+          if (idxB !== undefined) {
+            return idxA - idxB;
+          }
+          // Unedited car not in lastSortedOrder, keep edited car in its position
+          return idxA - Infinity;
+        }
+        if (bHasOverride) {
+          const idxA = orderMap.get(a.id);
+          const idxB = orderMap.get(b.id) ?? Infinity;
+          // If unedited car has a position, compare positions
+          if (idxA !== undefined) {
+            return idxA - idxB;
+          }
+          // Unedited car not in lastSortedOrder, keep edited car in its position
+          return Infinity - idxB;
+        }
+        
+        // Both unedited, sort by payment
+        const paymentsA = getCarPaymentsWithOverride(a, overrideDownPaymentValue, getCarOverrides(a.id));
+        const paymentsB = getCarPaymentsWithOverride(b, overrideDownPaymentValue, getCarOverrides(b.id));
+        return paymentsA.totalMonthlyPayment - paymentsB.totalMonthlyPayment;
+      });
+    }
+    
+    // No overrides or no lastSortedOrder, sort all cars normally
+    return [...selectedCars].sort((a, b) => {
+      const paymentsA = getCarPaymentsWithOverride(a, overrideDownPaymentValue, getCarOverrides(a.id));
+      const paymentsB = getCarPaymentsWithOverride(b, overrideDownPaymentValue, getCarOverrides(b.id));
+      return paymentsA.totalMonthlyPayment - paymentsB.totalMonthlyPayment;
+    });
+  }, [selectedCars, overrideDownPaymentValue, carOverrides, lastSortedOrder, hasOverride]);
+  
+  // Update last sorted order whenever cars or overrides change (but not while actively editing)
+  useEffect(() => {
+    if (!isEditingOverride && sortedCars.length > 0) {
+      const newOrder = sortedCars.map(car => car.id);
+      const newOrderStr = newOrder.join(',');
+      const lastOrderStr = lastSortedOrder.join(',');
+      // Only update if order actually changed
+      if (newOrderStr !== lastOrderStr) {
+        setLastSortedOrder(newOrder);
+      }
+    }
+  }, [sortedCars, isEditingOverride, lastSortedOrder]);
+
+  // Early return AFTER all hooks
+  if (savedCars.cars.length === 0) {
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-3 text-center">
+        <p className="text-gray-600 dark:text-gray-400 text-xs">No cars to compare. Add at least one car to use the comparison view.</p>
+      </div>
+    );
+  }
 
   const handleToggleCar = (carId: string) => {
     setSelectedCarIds(prev => {
@@ -598,9 +709,9 @@ export default function ComparisonView() {
                     <td colSpan={sortedCars.length + 1} className="p-1 font-bold text-gray-900 dark:text-white text-xs">Notes</td>
                   </tr>
                   <tr className="border-b border-gray-200 dark:border-gray-700">
-                    <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Notes</td>
+                    <td className="p-1.5 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10 text-xs">Notes</td>
                     {sortedCars.map((car) => (
-                      <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white text-sm whitespace-pre-wrap max-w-xs">{car.notes || 'N/A'}</td>
+                      <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs whitespace-pre-wrap max-w-xs">{car.notes || 'N/A'}</td>
                     ))}
                   </tr>
                 </>
@@ -626,28 +737,28 @@ export default function ComparisonView() {
                   const hasOverride = carOverrides[car.id]?.discount !== undefined && carOverrides[car.id]?.discount !== '';
                   return (
                     <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">
-                      <div className="flex flex-col items-center gap-1">
-                        <div>
+                      <div className="flex flex-col items-center gap-0.5">
+                        <div className="text-xs">
                           {formatCurrency(payments.baseCapCost)}
                           {discount > 0 && (
-                            <span className="text-gray-600 dark:text-gray-400 ml-2">
+                            <span className="text-gray-600 dark:text-gray-400 ml-1 text-[10px]">
                               ({discount.toFixed(1)}%, {formatCurrency(discountAmount)})
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-0.5">
                           <input
                             type="number"
                             step="0.1"
                             placeholder="Discount %"
                             value={carOverrides[car.id]?.discount ?? ''}
                             onChange={(e) => updateCarOverride(car.id, 'discount', e.target.value)}
-                            className="w-20 px-1 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                            className="w-16 px-1 py-0.5 text-[10px] border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                           />
                           {hasOverride && (
                             <button
                               onClick={() => clearCarOverride(car.id, 'discount')}
-                              className="text-xs text-red-600 dark:text-red-400 hover:underline"
+                              className="text-[10px] text-red-600 dark:text-red-400 hover:underline"
                               title="Clear override"
                             >
                               ✕
@@ -669,9 +780,9 @@ export default function ComparisonView() {
                   return (
                     <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">
                       <div className="flex flex-col items-center gap-1">
-                        <div>
+                        <div className="text-xs">
                           {formatCurrency(payments.residualValue)}
-                          <span className="text-gray-600 dark:text-gray-400 ml-2">({residualPercent.toFixed(1)}%)</span>
+                          <span className="text-gray-600 dark:text-gray-400 ml-1 text-[10px]">({residualPercent.toFixed(1)}%)</span>
                         </div>
                         <div className="flex items-center gap-1">
                           <input
@@ -680,12 +791,12 @@ export default function ComparisonView() {
                             placeholder="Residual %"
                             value={carOverrides[car.id]?.residualPercent ?? ''}
                             onChange={(e) => updateCarOverride(car.id, 'residualPercent', e.target.value)}
-                            className="w-20 px-1 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                            className="w-16 px-1 py-0.5 text-[10px] border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                           />
                           {hasOverride && (
                             <button
                               onClick={() => clearCarOverride(car.id, 'residualPercent')}
-                              className="text-xs text-red-600 dark:text-red-400 hover:underline"
+                              className="text-[10px] text-red-600 dark:text-red-400 hover:underline"
                               title="Clear override"
                             >
                               ✕
@@ -726,7 +837,7 @@ export default function ComparisonView() {
                   return (
                     <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white font-semibold">
                       <div className="flex flex-col items-center gap-1">
-                        <div>{formatCurrency(payments.totalDownPayment)}</div>
+                        <div className="text-xs">{formatCurrency(payments.totalDownPayment)}</div>
                         <div className="flex items-center gap-1">
                           <input
                             type="number"
@@ -734,12 +845,12 @@ export default function ComparisonView() {
                             placeholder="Down $"
                             value={carOverrides[car.id]?.downPayment ?? ''}
                             onChange={(e) => updateCarOverride(car.id, 'downPayment', e.target.value)}
-                            className="w-20 px-1 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                            className="w-16 px-1 py-0.5 text-[10px] border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                           />
                           {hasOverride && (
                             <button
                               onClick={() => clearCarOverride(car.id, 'downPayment')}
-                              className="text-xs text-red-600 dark:text-red-400 hover:underline"
+                              className="text-[10px] text-red-600 dark:text-red-400 hover:underline"
                               title="Clear override"
                             >
                               ✕
@@ -780,26 +891,26 @@ export default function ComparisonView() {
                   const hasMfOverride = carOverrides[car.id]?.marketFactor !== undefined && carOverrides[car.id]?.marketFactor !== '';
                   return (
                     <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">
-                      <div className="flex flex-col items-center gap-1">
-                        <div>{formatCurrency(payments.monthlyFinanceCharge)}</div>
-                        <div className="text-xs text-gray-600 dark:text-gray-400">({apr.toFixed(2)}% APR, {marketFactor.toFixed(6)} MF)</div>
-                        <div className="flex items-center gap-1 mt-1">
+                      <div className="flex flex-col items-center gap-0.5">
+                        <div className="text-xs">{formatCurrency(payments.monthlyFinanceCharge)}</div>
+                        <div className="text-[10px] text-gray-600 dark:text-gray-400">({apr.toFixed(2)}% APR, {marketFactor.toFixed(6)} MF)</div>
+                        <div className="flex items-center gap-0.5 mt-0.5">
                           <input
                             type="number"
                             step="0.01"
                             placeholder="APR %"
                             value={carOverrides[car.id]?.apr ?? ''}
                             onChange={(e) => updateCarOverride(car.id, 'apr', e.target.value)}
-                            className="w-16 px-1 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                            className="w-14 px-1 py-0.5 text-[10px] border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                           />
-                          <span className="text-xs text-gray-500">or</span>
+                          <span className="text-[10px] text-gray-500">or</span>
                           <input
                             type="number"
                             step="0.000001"
                             placeholder="MF"
                             value={carOverrides[car.id]?.marketFactor ?? ''}
                             onChange={(e) => updateCarOverride(car.id, 'marketFactor', e.target.value)}
-                            className="w-20 px-1 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                            className="w-16 px-1 py-0.5 text-[10px] border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                           />
                           {(hasAprOverride || hasMfOverride) && (
                             <button
@@ -807,7 +918,7 @@ export default function ComparisonView() {
                                 clearCarOverride(car.id, 'apr');
                                 clearCarOverride(car.id, 'marketFactor');
                               }}
-                              className="text-xs text-red-600 dark:text-red-400 hover:underline"
+                              className="text-[10px] text-red-600 dark:text-red-400 hover:underline"
                               title="Clear override"
                             >
                               ✕
@@ -829,7 +940,7 @@ export default function ComparisonView() {
                 })}
               </tr>
               <tr className="border-b border-gray-200 dark:border-gray-700 bg-yellow-50 dark:bg-yellow-900/20">
-                <td className="p-3 font-bold text-gray-900 dark:text-white sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700">Monthly Payment Total with Taxes</td>
+                <td className="p-1.5 font-bold text-gray-900 dark:text-white sticky left-0 bg-yellow-50 dark:bg-yellow-900/20 z-10 border-r border-gray-200 dark:border-gray-700 text-xs">Monthly Payment Total with Taxes</td>
                 {sortedCars.map((car) => {
                   const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
                   return (
