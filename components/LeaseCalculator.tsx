@@ -2,66 +2,17 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Document, Page, Text, View, StyleSheet, PDFDownloadLink, Font } from '@react-pdf/renderer';
-
-interface LeaseData {
-  id: string;
-  carMake: string;
-  carModel: string;
-  carTier: string;
-  dealership: string;
-  vin: string; // Vehicle Identification Number
-  msrp: number;
-  capCostPercent: number;
-  discount: number; // Discount percentage (0-100)
-  discountAmount: number; // Discount amount in dollars
-  residualPercent: number;
-  apr: number;
-  marketFactor: number;
-  leaseTerm: number;
-  ficoScore8: number; // FICO Score 8 (300-850)
-  salesTaxPercent: number; // Sales tax percentage
-  tagTitleFilingFees: number; // Tag/title/filing fees
-  handlingFees: number; // Handling fees (includes acquisition fee)
-  otherFees: number; // Other miscellaneous fees
-  downPayment: number; // Cash down payment
-  equityTransfer: number; // Trade-in equity value
-  dueAtSigning: number; // Total amount due at signing (reduces cap cost)
-  notes: string; // Notes for discussion/negotiation
-}
-
-
-interface SavedCars {
-  cars: LeaseData[];
-  currentCarId: string | null;
-}
-
-const STORAGE_KEY = 'car-lease-calculator-data';
-
-const createNewCar = (): LeaseData => ({
-  id: Date.now().toString(),
-  carMake: '',
-  carModel: '',
-  carTier: '',
-  dealership: '',
-  vin: '',
-  msrp: 0,
-  capCostPercent: 100,
-  discount: 0, // 0% discount = 100% of MSRP
-  discountAmount: 0, // Discount amount in dollars
-  residualPercent: 60,
-  apr: 0,
-  marketFactor: 0,
-  leaseTerm: 36,
-  ficoScore8: 0,
-  salesTaxPercent: 0,
-  tagTitleFilingFees: 0,
-  handlingFees: 700, // Default handling fee (includes acquisition fee)
-  otherFees: 0,
-  downPayment: 0,
-  equityTransfer: 0,
-  dueAtSigning: 0,
-  notes: '',
-});
+import {
+  LeaseData,
+  SavedCars,
+  STORAGE_KEY,
+  createNewCar,
+  getCarDisplayName,
+  getCarPayments,
+  loadFromStorage,
+  saveToStorage,
+  migrateCarData,
+} from '@/lib/leaseData';
 
 export default function LeaseCalculator() {
   const [savedCars, setSavedCars] = useState<SavedCars>({
@@ -78,6 +29,7 @@ export default function LeaseCalculator() {
   const [vinData, setVinData] = useState<string>('');
   const [showDealershipModal, setShowDealershipModal] = useState(false);
 
+
   const [expandedSteps, setExpandedSteps] = useState({
     step1: true,
     step2: false,
@@ -88,119 +40,20 @@ export default function LeaseCalculator() {
 
   // Load from localStorage on mount
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        // Handle migration from old format (single car) to new format (multiple cars)
-        if (parsed.cars && Array.isArray(parsed.cars)) {
-          // Migrate cars to include discount, discountAmount, and ficoScore8 fields if missing
-          const migratedCars = parsed.cars.map((car: LeaseData) => {
-            let updated = { ...car };
-            if (car.discount === undefined) {
-              // Calculate discount from capCostPercent: discount = (1 - capCostPercent/100) * 100
-              const discount = (1 - car.capCostPercent / 100) * 100;
-              updated = { ...updated, discount };
-            }
-            if (car.discountAmount === undefined) {
-              // Calculate discountAmount from discount and MSRP
-              const discount = updated.discount || 0;
-              const discountAmount = (car.msrp * discount) / 100;
-              updated = { ...updated, discountAmount };
-            }
-            if (car.ficoScore8 === undefined) {
-              updated = { ...updated, ficoScore8: 0 };
-            }
-            if (car.salesTaxPercent === undefined) {
-              updated = { ...updated, salesTaxPercent: 0 };
-            }
-            // Ensure fee fields exist
-            if (car.tagTitleFilingFees === undefined) {
-              updated = { ...updated, tagTitleFilingFees: 0 };
-            }
-            if (car.handlingFees === undefined) {
-              updated = { ...updated, handlingFees: 700 };
-            }
-            if (car.otherFees === undefined) {
-              updated = { ...updated, otherFees: 0 };
-            }
-            if (car.downPayment === undefined) {
-              updated = { ...updated, downPayment: 0 };
-            }
-            if (car.equityTransfer === undefined) {
-              updated = { ...updated, equityTransfer: 0 };
-            }
-            if (car.dueAtSigning === undefined) {
-              updated = { ...updated, dueAtSigning: 0 };
-            }
-            if (car.vin === undefined) {
-              updated = { ...updated, vin: '' };
-            }
-            if (car.dealership === undefined) {
-              updated = { ...updated, dealership: '' };
-            }
-            if (car.notes === undefined) {
-              updated = { ...updated, notes: '' };
-            }
-            return updated;
-          });
-          const migratedSavedCars = { ...parsed, cars: migratedCars };
-          setSavedCars(migratedSavedCars);
-          if (parsed.currentCarId && migratedCars.length > 0) {
-            const currentCar = migratedCars.find((c: LeaseData) => c.id === parsed.currentCarId);
-            if (currentCar) {
-              setData(currentCar);
-            } else {
-              setData(migratedCars[0]);
-              setSavedCars((prev) => ({ ...prev, currentCarId: migratedCars[0].id }));
-            }
-          } else if (migratedCars.length > 0) {
-            setData(migratedCars[0]);
-            setSavedCars((prev) => ({ ...prev, currentCarId: migratedCars[0].id }));
-          }
+    const loaded = loadFromStorage();
+    if (loaded) {
+      setSavedCars(loaded);
+      if (loaded.currentCarId && loaded.cars.length > 0) {
+        const currentCar = loaded.cars.find((c) => c.id === loaded.currentCarId);
+        if (currentCar) {
+          setData(currentCar);
         } else {
-          // Old format - migrate to new format
-          const discount = parsed.discount !== undefined ? parsed.discount : (1 - parsed.capCostPercent / 100) * 100;
-          const discountAmount = parsed.discountAmount !== undefined ? parsed.discountAmount : (parsed.msrp * discount) / 100;
-          const ficoScore8 = parsed.ficoScore8 !== undefined ? parsed.ficoScore8 : 0;
-          const salesTaxPercent = parsed.salesTaxPercent !== undefined ? parsed.salesTaxPercent : 0;
-          // Ensure fee fields exist
-          const tagTitleFilingFees = parsed.tagTitleFilingFees !== undefined ? parsed.tagTitleFilingFees : 0;
-          const handlingFees = parsed.handlingFees !== undefined ? parsed.handlingFees : 700;
-          const otherFees = parsed.otherFees !== undefined ? parsed.otherFees : 0;
-          const downPayment = parsed.downPayment !== undefined ? parsed.downPayment : 0;
-          const equityTransfer = parsed.equityTransfer !== undefined ? parsed.equityTransfer : 0;
-          const dueAtSigning = parsed.dueAtSigning !== undefined ? parsed.dueAtSigning : 0;
-          const vin = parsed.vin !== undefined ? parsed.vin : '';
-          const dealership = parsed.dealership !== undefined ? parsed.dealership : '';
-          const notes = parsed.notes !== undefined ? parsed.notes : '';
-          const migratedCar = { 
-            ...parsed, 
-            id: Date.now().toString(), 
-            discount, 
-            discountAmount, 
-            ficoScore8,
-            salesTaxPercent,
-            tagTitleFilingFees,
-            handlingFees,
-            otherFees,
-            downPayment,
-            equityTransfer,
-            dueAtSigning,
-            vin,
-            dealership,
-            notes,
-          };
-          const newSavedCars = {
-            cars: [migratedCar],
-            currentCarId: migratedCar.id,
-          };
-          setSavedCars(newSavedCars);
-          setData(migratedCar);
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(newSavedCars));
+          setData(loaded.cars[0]);
+          setSavedCars((prev) => ({ ...prev, currentCarId: loaded.cars[0].id }));
         }
-      } catch (e) {
-        console.error('Failed to load from localStorage:', e);
+      } else if (loaded.cars.length > 0) {
+        setData(loaded.cars[0]);
+        setSavedCars((prev) => ({ ...prev, currentCarId: loaded.cars[0].id }));
       }
     } else {
       // No saved data - create a new car
@@ -218,7 +71,7 @@ export default function LeaseCalculator() {
   // Save to localStorage when savedCars changes
   useEffect(() => {
     if (!isInitialLoad.current && savedCars.cars.length > 0) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(savedCars));
+      saveToStorage(savedCars);
     }
   }, [savedCars]);
 
@@ -366,43 +219,11 @@ export default function LeaseCalculator() {
               carToAdd = loaded;
             }
             
-            // Ensure all fields exist
-            const discount = carToAdd.discount !== undefined ? carToAdd.discount : 
-              (carToAdd.capCostPercent !== undefined ? (1 - carToAdd.capCostPercent / 100) * 100 : 0);
-            const discountAmount = carToAdd.discountAmount !== undefined ? carToAdd.discountAmount : 
-              (carToAdd.msrp ? (carToAdd.msrp * discount) / 100 : 0);
-            const ficoScore8 = carToAdd.ficoScore8 !== undefined ? carToAdd.ficoScore8 : 0;
-            const salesTaxPercent = carToAdd.salesTaxPercent !== undefined ? carToAdd.salesTaxPercent : 0;
-            const tagTitleFilingFees = carToAdd.tagTitleFilingFees !== undefined ? carToAdd.tagTitleFilingFees : 0;
-            const handlingFees = carToAdd.handlingFees !== undefined ? carToAdd.handlingFees : 700;
-            const otherFees = carToAdd.otherFees !== undefined ? carToAdd.otherFees : 0;
-            const downPayment = carToAdd.downPayment !== undefined ? carToAdd.downPayment : 0;
-            const equityTransfer = carToAdd.equityTransfer !== undefined ? carToAdd.equityTransfer : 0;
-            const dueAtSigning = carToAdd.dueAtSigning !== undefined ? carToAdd.dueAtSigning : 0;
-            const vin = carToAdd.vin !== undefined ? carToAdd.vin : '';
-            const dealership = carToAdd.dealership !== undefined ? carToAdd.dealership : '';
-            const notes = carToAdd.notes !== undefined ? carToAdd.notes : '';
-            
-            // Ensure car has an ID
-            const carId = carToAdd.id || Date.now().toString();
-            
-            const migratedCar: LeaseData = {
+            // Migrate car data to ensure all fields exist
+            const migratedCar = migrateCarData({
               ...carToAdd,
-              id: carId,
-              discount,
-              discountAmount,
-              ficoScore8,
-              salesTaxPercent,
-              tagTitleFilingFees,
-              handlingFees,
-              otherFees,
-              downPayment,
-              equityTransfer,
-              dueAtSigning,
-              vin,
-              dealership,
-              notes,
-            };
+              id: carToAdd.id || Date.now().toString(),
+            });
             
             // Add or update the car in savedCars (useEffect will save to localStorage)
             setSavedCars((prev) => {
@@ -450,45 +271,13 @@ export default function LeaseCalculator() {
             
             // Validate that it's a savedCars format
             if (loaded.cars && Array.isArray(loaded.cars)) {
-              // Ensure all cars have all required fields
-              const migratedCars = loaded.cars.map((car: any) => {
-                const discount = car.discount !== undefined ? car.discount : 
-                  (car.capCostPercent !== undefined ? (1 - car.capCostPercent / 100) * 100 : 0);
-                const discountAmount = car.discountAmount !== undefined ? car.discountAmount : 
-                  (car.msrp ? (car.msrp * discount) / 100 : 0);
-                const ficoScore8 = car.ficoScore8 !== undefined ? car.ficoScore8 : 0;
-                const salesTaxPercent = car.salesTaxPercent !== undefined ? car.salesTaxPercent : 0;
-                const tagTitleFilingFees = car.tagTitleFilingFees !== undefined ? car.tagTitleFilingFees : 0;
-                const handlingFees = car.handlingFees !== undefined ? car.handlingFees : 700;
-                const otherFees = car.otherFees !== undefined ? car.otherFees : 0;
-                const downPayment = car.downPayment !== undefined ? car.downPayment : 0;
-                const equityTransfer = car.equityTransfer !== undefined ? car.equityTransfer : 0;
-                const dueAtSigning = car.dueAtSigning !== undefined ? car.dueAtSigning : 0;
-                const vin = car.vin !== undefined ? car.vin : '';
-                const dealership = car.dealership !== undefined ? car.dealership : '';
-                const notes = car.notes !== undefined ? car.notes : '';
-                
-                // Ensure car has an ID
-                const carId = car.id || Date.now().toString() + Math.random().toString(36).substr(2, 9);
-                
-                return {
+              // Migrate all cars to ensure all required fields exist
+              const migratedCars = loaded.cars.map((car: any) => 
+                migrateCarData({
                   ...car,
-                  id: carId,
-                  discount,
-                  discountAmount,
-                  ficoScore8,
-                  salesTaxPercent,
-                  tagTitleFilingFees,
-                  handlingFees,
-                  otherFees,
-                  downPayment,
-                  equityTransfer,
-                  dueAtSigning,
-                  vin,
-                  dealership,
-                  notes,
-                } as LeaseData;
-              });
+                  id: car.id || Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                })
+              );
               
               const currentCarId = loaded.currentCarId && migratedCars.some((c: LeaseData) => c.id === loaded.currentCarId)
                 ? loaded.currentCarId
@@ -1255,13 +1044,6 @@ export default function LeaseCalculator() {
     }
   };
 
-  const getCarDisplayName = (car: LeaseData): string => {
-    if (car.carMake && car.carModel) {
-      const baseName = `${car.carMake} ${car.carModel}${car.carTier ? ` ${car.carTier}` : ''}`;
-      return car.dealership ? `${baseName} - ${car.dealership}` : baseName;
-    }
-    return 'New Car';
-  };
 
   // Calculate cap costs for different discount percentages - dynamic range based on entered value
   const getCapCosts = () => {
@@ -1517,6 +1299,7 @@ export default function LeaseCalculator() {
   };
 
   const paymentData = getMonthlyPayments();
+
 
   return (
     <div className="space-y-6">
