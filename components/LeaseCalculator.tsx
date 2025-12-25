@@ -28,18 +28,6 @@ interface LeaseData {
   notes: string; // Notes for discussion/negotiation
 }
 
-// Legacy data structure for migration purposes - contains old fee fields that may exist in saved data
-interface LegacyLeaseData extends Partial<LeaseData> {
-  acquisitionFee?: number;
-  registrationFee?: number;
-  titleFee?: number;
-  licensePlateFee?: number;
-  titleAndDealerFees?: number;
-  documentationFee?: number;
-  dealerFee?: number;
-  inspectionFee?: number;
-  dispositionFee?: number;
-}
 
 interface SavedCars {
   cars: LeaseData[];
@@ -124,36 +112,15 @@ export default function LeaseCalculator() {
             if (car.salesTaxPercent === undefined) {
               updated = { ...updated, salesTaxPercent: 0 };
             }
-            // Migrate to new simplified fee structure
+            // Ensure fee fields exist
             if (car.tagTitleFilingFees === undefined) {
-              // Combine registration, title, filing fees
-              const legacyCar = car as LegacyLeaseData;
-              const registrationFee = legacyCar.registrationFee || 0;
-              const titleFee = legacyCar.titleFee || 0;
-              const licensePlateFee = legacyCar.licensePlateFee || 0;
-              const titleAndDealerFees = legacyCar.titleAndDealerFees || 0;
-              // If titleAndDealerFees exists, use it; otherwise sum individual fees
-              // For tag/title/filing, we'll estimate: registration + title parts
-              updated = { ...updated, tagTitleFilingFees: registrationFee + titleFee + licensePlateFee + (titleAndDealerFees * 0.6) };
+              updated = { ...updated, tagTitleFilingFees: 0 };
             }
             if (car.handlingFees === undefined) {
-              // Combine acquisition fee (from old data), documentation and dealer handling fees
-              const legacyCar = car as LegacyLeaseData;
-              const acquisitionFee = legacyCar.acquisitionFee || 0;
-              const documentationFee = legacyCar.documentationFee || 0;
-              const dealerFee = legacyCar.dealerFee || 0;
-              const titleAndDealerFees = legacyCar.titleAndDealerFees || 0;
-              // Default to 700 if no old fees exist, otherwise combine them
-              const defaultHandlingFees = acquisitionFee + documentationFee + dealerFee + (titleAndDealerFees * 0.4);
-              updated = { ...updated, handlingFees: defaultHandlingFees > 0 ? defaultHandlingFees : 700 };
+              updated = { ...updated, handlingFees: 700 };
             }
             if (car.otherFees === undefined) {
-              // Combine inspection, disposition, and other fees
-              const legacyCar = car as LegacyLeaseData;
-              const inspectionFee = legacyCar.inspectionFee || 0;
-              const dispositionFee = legacyCar.dispositionFee || 0;
-              const oldOtherFees = legacyCar.otherFees || 0;
-              updated = { ...updated, otherFees: inspectionFee + dispositionFee + oldOtherFees };
+              updated = { ...updated, otherFees: 0 };
             }
             if (car.downPayment === undefined) {
               updated = { ...updated, downPayment: 0 };
@@ -192,24 +159,10 @@ export default function LeaseCalculator() {
           const discountAmount = parsed.discountAmount !== undefined ? parsed.discountAmount : (parsed.msrp * discount) / 100;
           const ficoScore8 = parsed.ficoScore8 !== undefined ? parsed.ficoScore8 : 0;
           const salesTaxPercent = parsed.salesTaxPercent !== undefined ? parsed.salesTaxPercent : 0;
-          // Migrate to new simplified fee structure
-          const legacyParsed = parsed as LegacyLeaseData;
-          const acquisitionFee = legacyParsed.acquisitionFee || 0;
-          const registrationFee = legacyParsed.registrationFee || 0;
-          const titleFee = legacyParsed.titleFee || 0;
-          const licensePlateFee = legacyParsed.licensePlateFee || 0;
-          const titleAndDealerFees = legacyParsed.titleAndDealerFees || 0;
-          const tagTitleFilingFees = parsed.tagTitleFilingFees !== undefined ? parsed.tagTitleFilingFees :
-            (registrationFee + titleFee + licensePlateFee + (titleAndDealerFees * 0.6));
-          const documentationFee = legacyParsed.documentationFee || 0;
-          const dealerFee = legacyParsed.dealerFee || 0;
-          const handlingFees = parsed.handlingFees !== undefined ? parsed.handlingFees :
-            (acquisitionFee + documentationFee + dealerFee + (titleAndDealerFees * 0.4) || 700);
-          const inspectionFee = legacyParsed.inspectionFee || 0;
-          const dispositionFee = legacyParsed.dispositionFee || 0;
-          const oldOtherFees = parsed.otherFees || 0;
-          const otherFees = parsed.otherFees !== undefined && legacyParsed.inspectionFee === undefined && legacyParsed.dispositionFee === undefined ? parsed.otherFees :
-            (inspectionFee + dispositionFee + oldOtherFees);
+          // Ensure fee fields exist
+          const tagTitleFilingFees = parsed.tagTitleFilingFees !== undefined ? parsed.tagTitleFilingFees : 0;
+          const handlingFees = parsed.handlingFees !== undefined ? parsed.handlingFees : 700;
+          const otherFees = parsed.otherFees !== undefined ? parsed.otherFees : 0;
           const downPayment = parsed.downPayment !== undefined ? parsed.downPayment : 0;
           const equityTransfer = parsed.equityTransfer !== undefined ? parsed.equityTransfer : 0;
           const dueAtSigning = parsed.dueAtSigning !== undefined ? parsed.dueAtSigning : 0;
@@ -393,29 +346,16 @@ export default function LeaseCalculator() {
               carToAdd = loaded;
             }
             
-            // Migrate the car to ensure all fields exist
-            const legacyParsed = carToAdd as LegacyLeaseData;
+            // Ensure all fields exist
             const discount = carToAdd.discount !== undefined ? carToAdd.discount : 
               (carToAdd.capCostPercent !== undefined ? (1 - carToAdd.capCostPercent / 100) * 100 : 0);
             const discountAmount = carToAdd.discountAmount !== undefined ? carToAdd.discountAmount : 
               (carToAdd.msrp ? (carToAdd.msrp * discount) / 100 : 0);
             const ficoScore8 = carToAdd.ficoScore8 !== undefined ? carToAdd.ficoScore8 : 0;
             const salesTaxPercent = carToAdd.salesTaxPercent !== undefined ? carToAdd.salesTaxPercent : 0;
-            
-            // Migrate fee structure
-            const acquisitionFee = legacyParsed.acquisitionFee || 0;
-            const documentationFee = legacyParsed.documentationFee || 0;
-            const dealerFee = legacyParsed.dealerFee || 0;
-            const titleAndDealerFees = legacyParsed.titleAndDealerFees || 0;
-            const tagTitleFilingFees = carToAdd.tagTitleFilingFees !== undefined ? carToAdd.tagTitleFilingFees :
-              (legacyParsed.titleFee || 0) + (legacyParsed.licensePlateFee || 0) + (legacyParsed.registrationFee || 0) + (titleAndDealerFees * 0.6);
-            const handlingFees = carToAdd.handlingFees !== undefined ? carToAdd.handlingFees :
-              (acquisitionFee + documentationFee + dealerFee + (titleAndDealerFees * 0.4) || 700);
-            const inspectionFee = legacyParsed.inspectionFee || 0;
-            const dispositionFee = legacyParsed.dispositionFee || 0;
-            const oldOtherFees = carToAdd.otherFees || 0;
-            const otherFees = carToAdd.otherFees !== undefined && legacyParsed.inspectionFee === undefined && legacyParsed.dispositionFee === undefined ? carToAdd.otherFees :
-              (inspectionFee + dispositionFee + oldOtherFees);
+            const tagTitleFilingFees = carToAdd.tagTitleFilingFees !== undefined ? carToAdd.tagTitleFilingFees : 0;
+            const handlingFees = carToAdd.handlingFees !== undefined ? carToAdd.handlingFees : 700;
+            const otherFees = carToAdd.otherFees !== undefined ? carToAdd.otherFees : 0;
             const downPayment = carToAdd.downPayment !== undefined ? carToAdd.downPayment : 0;
             const equityTransfer = carToAdd.equityTransfer !== undefined ? carToAdd.equityTransfer : 0;
             const dueAtSigning = carToAdd.dueAtSigning !== undefined ? carToAdd.dueAtSigning : 0;
@@ -488,30 +428,17 @@ export default function LeaseCalculator() {
             
             // Validate that it's a savedCars format
             if (loaded.cars && Array.isArray(loaded.cars)) {
-              // Migrate all cars to ensure they have all required fields
+              // Ensure all cars have all required fields
               const migratedCars = loaded.cars.map((car: any) => {
-                const legacyParsed = car as LegacyLeaseData;
                 const discount = car.discount !== undefined ? car.discount : 
                   (car.capCostPercent !== undefined ? (1 - car.capCostPercent / 100) * 100 : 0);
                 const discountAmount = car.discountAmount !== undefined ? car.discountAmount : 
                   (car.msrp ? (car.msrp * discount) / 100 : 0);
                 const ficoScore8 = car.ficoScore8 !== undefined ? car.ficoScore8 : 0;
                 const salesTaxPercent = car.salesTaxPercent !== undefined ? car.salesTaxPercent : 0;
-                
-                // Migrate fee structure
-                const acquisitionFee = legacyParsed.acquisitionFee || 0;
-                const documentationFee = legacyParsed.documentationFee || 0;
-                const dealerFee = legacyParsed.dealerFee || 0;
-                const titleAndDealerFees = legacyParsed.titleAndDealerFees || 0;
-                const tagTitleFilingFees = car.tagTitleFilingFees !== undefined ? car.tagTitleFilingFees :
-                  (legacyParsed.titleFee || 0) + (legacyParsed.licensePlateFee || 0) + (legacyParsed.registrationFee || 0) + (titleAndDealerFees * 0.6);
-                const handlingFees = car.handlingFees !== undefined ? car.handlingFees :
-                  (acquisitionFee + documentationFee + dealerFee + (titleAndDealerFees * 0.4) || 700);
-                const inspectionFee = legacyParsed.inspectionFee || 0;
-                const dispositionFee = legacyParsed.dispositionFee || 0;
-                const oldOtherFees = car.otherFees || 0;
-                const otherFees = car.otherFees !== undefined && legacyParsed.inspectionFee === undefined && legacyParsed.dispositionFee === undefined ? car.otherFees :
-                  (inspectionFee + dispositionFee + oldOtherFees);
+                const tagTitleFilingFees = car.tagTitleFilingFees !== undefined ? car.tagTitleFilingFees : 0;
+                const handlingFees = car.handlingFees !== undefined ? car.handlingFees : 700;
+                const otherFees = car.otherFees !== undefined ? car.otherFees : 0;
                 const downPayment = car.downPayment !== undefined ? car.downPayment : 0;
                 const equityTransfer = car.equityTransfer !== undefined ? car.equityTransfer : 0;
                 const dueAtSigning = car.dueAtSigning !== undefined ? car.dueAtSigning : 0;
