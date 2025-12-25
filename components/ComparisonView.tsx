@@ -15,6 +15,7 @@ export default function ComparisonView() {
     currentCarId: null,
   });
   const [selectedCarIds, setSelectedCarIds] = useState<Set<string>>(new Set());
+  const [overrideDownPayment, setOverrideDownPayment] = useState<string>('');
 
   // Load from localStorage
   useEffect(() => {
@@ -53,11 +54,54 @@ export default function ComparisonView() {
   const formatCurrency = (amount: number) => 
     `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+  // Helper function to get payments with optional down payment override
+  const getCarPaymentsWithOverride = (car: LeaseData, overrideDownPaymentValue?: number) => {
+    const basePayments = getCarPayments(car);
+    
+    if (overrideDownPaymentValue === undefined || overrideDownPaymentValue === null) {
+      return basePayments;
+    }
+    
+    // Recalculate with override down payment
+    const baseCapCost = car.msrp * (1 - (car.discount || 0) / 100);
+    const totalFees = 
+      (car.tagTitleFilingFees || 0) +
+      (car.handlingFees || 0) +
+      (car.otherFees || 0);
+    const totalDownPayment = overrideDownPaymentValue + (car.equityTransfer || 0) + (car.dueAtSigning || 0);
+    const adjustedCapCost = baseCapCost + totalFees - totalDownPayment;
+    const adjustedCapCostWithTax = adjustedCapCost * (1 + (car.salesTaxPercent || 0) / 100);
+    const residualValue = (car.msrp * car.residualPercent) / 100;
+    const depreciation = adjustedCapCost - residualValue;
+    const monthlyDepreciation = depreciation / car.leaseTerm;
+    const currentApr = car.apr || (car.marketFactor ? car.marketFactor * 2400 : 0);
+    const monthlyRate = currentApr / 100 / 12;
+    const monthlyFinanceCharge = (adjustedCapCost + residualValue) * monthlyRate;
+    const baseMonthlyPayment = monthlyDepreciation + monthlyFinanceCharge;
+    const salesTaxMultiplier = 1 + (car.salesTaxPercent || 0) / 100;
+    const totalMonthlyPayment = baseMonthlyPayment * salesTaxMultiplier;
+    
+    return {
+      ...basePayments,
+      adjustedCapCost,
+      adjustedCapCostWithTax,
+      totalDownPayment,
+      depreciation,
+      monthlyDepreciation,
+      monthlyFinanceCharge,
+      baseMonthlyPayment,
+      totalMonthlyPayment,
+    };
+  };
+
+  // Parse override down payment value
+  const overrideDownPaymentValue = overrideDownPayment === '' ? undefined : parseFloat(overrideDownPayment) || 0;
+
   // Filter to only selected cars, then sort by total monthly payment (with tax) - least expensive first
   const selectedCars = savedCars.cars.filter(car => selectedCarIds.has(car.id));
   const sortedCars = [...selectedCars].sort((a, b) => {
-    const paymentsA = getCarPayments(a);
-    const paymentsB = getCarPayments(b);
+    const paymentsA = getCarPaymentsWithOverride(a, overrideDownPaymentValue);
+    const paymentsB = getCarPaymentsWithOverride(b, overrideDownPaymentValue);
     return paymentsA.totalMonthlyPayment - paymentsB.totalMonthlyPayment;
   });
 
@@ -96,6 +140,35 @@ export default function ComparisonView() {
 
   return (
     <div className="space-y-6">
+      {/* Down Payment Override */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+        <div className="flex flex-col md:flex-row md:items-center gap-4">
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">
+            Override Down Payment for All Cars:
+          </label>
+          <input
+            type="number"
+            value={overrideDownPayment}
+            onChange={(e) => setOverrideDownPayment(e.target.value)}
+            placeholder="Leave empty to use car's down payment"
+            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+          {overrideDownPayment !== '' && (
+            <button
+              onClick={() => setOverrideDownPayment('')}
+              className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors whitespace-nowrap"
+            >
+              Clear Override
+            </button>
+          )}
+        </div>
+        {overrideDownPayment !== '' && (
+          <p className="text-xs text-gray-600 dark:text-gray-400 mt-2">
+            All calculations below use ${parseFloat(overrideDownPayment) || 0} as the down payment (equity transfer and due at signing are still included)
+          </p>
+        )}
+      </div>
+
       {/* Car Selection Controls */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
@@ -118,7 +191,7 @@ export default function ComparisonView() {
         <div className="flex flex-wrap gap-2">
           {savedCars.cars.map((car) => {
             const isSelected = selectedCarIds.has(car.id);
-            const payments = getCarPayments(car);
+            const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
             return (
               <label
                 key={car.id}
@@ -281,7 +354,7 @@ export default function ComparisonView() {
               <tr className="border-b border-gray-200 dark:border-gray-700">
                 <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Base Cap Cost</td>
                 {sortedCars.map((car) => {
-                  const payments = getCarPayments(car);
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
                   return (
                     <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">{formatCurrency(payments.baseCapCost)}</td>
                   );
@@ -290,7 +363,7 @@ export default function ComparisonView() {
               <tr className="border-b border-gray-200 dark:border-gray-700">
                 <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Adjusted Cap Cost</td>
                 {sortedCars.map((car) => {
-                  const payments = getCarPayments(car);
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
                   return (
                     <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">{formatCurrency(payments.adjustedCapCost)}</td>
                   );
@@ -299,7 +372,7 @@ export default function ComparisonView() {
               <tr className="border-b border-gray-200 dark:border-gray-700">
                 <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Adjusted Cap Cost (with tax)</td>
                 {sortedCars.map((car) => {
-                  const payments = getCarPayments(car);
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
                   return (
                     <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">{formatCurrency(payments.adjustedCapCostWithTax)}</td>
                   );
@@ -308,7 +381,7 @@ export default function ComparisonView() {
               <tr className="border-b border-gray-200 dark:border-gray-700">
                 <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Residual Value</td>
                 {sortedCars.map((car) => {
-                  const payments = getCarPayments(car);
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
                   return (
                     <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">{formatCurrency(payments.residualValue)}</td>
                   );
@@ -335,16 +408,21 @@ export default function ComparisonView() {
               <tr className="border-b border-gray-200 dark:border-gray-700">
                 <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Total Fees</td>
                 {sortedCars.map((car) => {
-                  const payments = getCarPayments(car);
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
                   return (
                     <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white font-semibold">{formatCurrency(payments.totalFees)}</td>
                   );
                 })}
               </tr>
               <tr className="border-b border-gray-200 dark:border-gray-700">
-                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Down Payment</td>
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10 border-r border-gray-200 dark:border-gray-700">
+                  Down Payment
+                  {overrideDownPayment !== '' && <span className="text-xs text-blue-600 dark:text-blue-400 block">(overridden)</span>}
+                </td>
                 {sortedCars.map((car) => (
-                  <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">{formatCurrency(car.downPayment || 0)}</td>
+                  <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">
+                    {formatCurrency(overrideDownPaymentValue !== undefined ? overrideDownPaymentValue : (car.downPayment || 0))}
+                  </td>
                 ))}
               </tr>
               <tr className="border-b border-gray-200 dark:border-gray-700">
@@ -362,7 +440,7 @@ export default function ComparisonView() {
               <tr className="border-b border-gray-200 dark:border-gray-700">
                 <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Total Down Payment</td>
                 {sortedCars.map((car) => {
-                  const payments = getCarPayments(car);
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
                   return (
                     <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white font-semibold">{formatCurrency(payments.totalDownPayment)}</td>
                   );
@@ -371,7 +449,7 @@ export default function ComparisonView() {
               <tr className="border-b border-gray-200 dark:border-gray-700">
                 <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Depreciation (Total)</td>
                 {sortedCars.map((car) => {
-                  const payments = getCarPayments(car);
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
                   return (
                     <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">{formatCurrency(payments.depreciation)}</td>
                   );
@@ -385,7 +463,7 @@ export default function ComparisonView() {
               <tr className="border-b border-gray-200 dark:border-gray-700">
                 <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Monthly Depreciation</td>
                 {sortedCars.map((car) => {
-                  const payments = getCarPayments(car);
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
                   return (
                     <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">{formatCurrency(payments.monthlyDepreciation)}</td>
                   );
@@ -394,7 +472,7 @@ export default function ComparisonView() {
               <tr className="border-b border-gray-200 dark:border-gray-700">
                 <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Monthly Finance Charge</td>
                 {sortedCars.map((car) => {
-                  const payments = getCarPayments(car);
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
                   return (
                     <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">{formatCurrency(payments.monthlyFinanceCharge)}</td>
                   );
@@ -403,7 +481,7 @@ export default function ComparisonView() {
               <tr className="border-b border-gray-200 dark:border-gray-700">
                 <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Monthly Payment (without tax)</td>
                 {sortedCars.map((car) => {
-                  const payments = getCarPayments(car);
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
                   return (
                     <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">{formatCurrency(payments.baseMonthlyPayment)}</td>
                   );
@@ -412,7 +490,7 @@ export default function ComparisonView() {
               <tr className="border-b border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20">
                 <td className="p-3 font-bold text-gray-900 dark:text-white sticky left-0 bg-blue-50 dark:bg-blue-900/20 z-10">Monthly Payment (with tax)</td>
                 {sortedCars.map((car) => {
-                  const payments = getCarPayments(car);
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
                   return (
                     <td key={car.id} className="p-3 text-center font-bold text-blue-600 dark:text-blue-400">{formatCurrency(payments.totalMonthlyPayment)}</td>
                   );
@@ -426,7 +504,7 @@ export default function ComparisonView() {
               <tr className="border-b border-gray-200 dark:border-gray-700">
                 <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Total (without tax)</td>
                 {sortedCars.map((car) => {
-                  const payments = getCarPayments(car);
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
                   const total = payments.baseMonthlyPayment * car.leaseTerm;
                   return (
                     <td key={car.id} className="p-3 text-center text-gray-900 dark:text-white">{formatCurrency(total)}</td>
@@ -436,7 +514,7 @@ export default function ComparisonView() {
               <tr className="border-b border-gray-200 dark:border-gray-700 bg-green-50 dark:bg-green-900/20">
                 <td className="p-3 font-bold text-gray-900 dark:text-white sticky left-0 bg-green-50 dark:bg-green-900/20 z-10">Total (with tax)</td>
                 {sortedCars.map((car) => {
-                  const payments = getCarPayments(car);
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue);
                   const total = payments.totalMonthlyPayment * car.leaseTerm;
                   return (
                     <td key={car.id} className="p-3 text-center font-bold text-green-600 dark:text-green-400">{formatCurrency(total)}</td>
