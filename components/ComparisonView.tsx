@@ -23,6 +23,7 @@ export default function ComparisonView() {
       apr?: string;
       marketFactor?: string;
       downPayment?: string;
+      totalFees?: string;
     };
   }>({});
   const [isEditingOverride, setIsEditingOverride] = useState(false);
@@ -62,7 +63,7 @@ export default function ComparisonView() {
   const getCarPaymentsWithOverride = (
     car: LeaseData, 
     overrideDownPaymentValue?: number,
-    overrides?: { discount?: number; residualPercent?: number; apr?: number; marketFactor?: number; downPayment?: number }
+    overrides?: { discount?: number; residualPercent?: number; apr?: number; marketFactor?: number; downPayment?: number; totalFees?: number }
   ) => {
     // Use overrides if provided, otherwise use car values
     const discount = overrides?.discount !== undefined ? overrides.discount : (car.discount || 0);
@@ -86,10 +87,9 @@ export default function ComparisonView() {
     
     // Recalculate with overrides
     const baseCapCost = car.msrp * (1 - discount / 100);
-    const totalFees = 
-      (car.tagTitleFilingFees || 0) +
-      (car.handlingFees || 0) +
-      (car.otherFees || 0);
+    const totalFees = overrides?.totalFees !== undefined 
+      ? overrides.totalFees
+      : ((car.tagTitleFilingFees || 0) + (car.handlingFees || 0) + (car.otherFees || 0));
     const totalDownPayment = downPaymentOverride + (car.equityTransfer || 0) + (car.dueAtSigning || 0);
     const adjustedCapCost = baseCapCost + totalFees - totalDownPayment;
     const adjustedCapCostWithTax = adjustedCapCost * (1 + (car.salesTaxPercent || 0) / 100);
@@ -133,11 +133,12 @@ export default function ComparisonView() {
       apr: overrides.apr !== undefined && overrides.apr !== '' ? parseFloat(overrides.apr) : undefined,
       marketFactor: overrides.marketFactor !== undefined && overrides.marketFactor !== '' ? parseFloat(overrides.marketFactor) : undefined,
       downPayment: overrides.downPayment !== undefined && overrides.downPayment !== '' ? parseFloat(overrides.downPayment) : undefined,
+      totalFees: overrides.totalFees !== undefined && overrides.totalFees !== '' ? parseFloat(overrides.totalFees) : undefined,
     };
   };
 
   // Helper to update car override
-  const updateCarOverride = (carId: string, field: 'discount' | 'residualPercent' | 'apr' | 'marketFactor' | 'downPayment', value: string) => {
+  const updateCarOverride = (carId: string, field: 'discount' | 'residualPercent' | 'apr' | 'marketFactor' | 'downPayment' | 'totalFees', value: string) => {
     setIsEditingOverride(true);
     
     // Clear existing timeout
@@ -171,7 +172,7 @@ export default function ComparisonView() {
   }, [editingTimeout]);
 
   // Helper to clear car override
-  const clearCarOverride = (carId: string, field: 'discount' | 'residualPercent' | 'apr' | 'marketFactor' | 'downPayment') => {
+  const clearCarOverride = (carId: string, field: 'discount' | 'residualPercent' | 'apr' | 'marketFactor' | 'downPayment' | 'totalFees') => {
     setCarOverrides(prev => {
       const newOverrides = { ...prev[carId] };
       delete newOverrides[field];
@@ -204,7 +205,8 @@ export default function ComparisonView() {
       (overrides.residualPercent !== undefined && overrides.residualPercent !== '') ||
       (overrides.apr !== undefined && overrides.apr !== '') ||
       (overrides.marketFactor !== undefined && overrides.marketFactor !== '') ||
-      (overrides.downPayment !== undefined && overrides.downPayment !== '')
+      (overrides.downPayment !== undefined && overrides.downPayment !== '') ||
+      (overrides.totalFees !== undefined && overrides.totalFees !== '')
     );
   }, [carOverrides]);
 
@@ -817,13 +819,34 @@ export default function ComparisonView() {
                   const handling = car.handlingFees || 0;
                   const other = car.otherFees || 0;
                   const tooltipText = `Tag/Title/Filing: ${formatCurrency(tagTitleFiling)}\nHandling: ${formatCurrency(handling)}\nOther: ${formatCurrency(other)}`;
+                  const hasOverride = carOverrides[car.id]?.totalFees !== undefined && carOverrides[car.id]?.totalFees !== '';
                   return (
                     <td 
                       key={car.id} 
-                      className="p-3 text-center text-gray-900 dark:text-white font-semibold cursor-help" 
-                      title={tooltipText}
+                      className="p-1.5 text-center text-gray-900 dark:text-white font-semibold cursor-help text-xs"
                     >
-                      {formatCurrency(payments.totalFees)}
+                      <div className="flex flex-col items-center gap-0.5">
+                        <div title={tooltipText}>{formatCurrency(payments.totalFees)}</div>
+                        <div className="flex items-center gap-0.5">
+                          <input
+                            type="number"
+                            step="100"
+                            placeholder="Total $"
+                            value={carOverrides[car.id]?.totalFees ?? ''}
+                            onChange={(e) => updateCarOverride(car.id, 'totalFees', e.target.value)}
+                            className="w-16 px-1 py-0.5 text-[10px] border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                          />
+                          {hasOverride && (
+                            <button
+                              onClick={() => clearCarOverride(car.id, 'totalFees')}
+                              className="text-[10px] text-red-600 dark:text-red-400 hover:underline"
+                              title="Clear override"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </td>
                   );
                 })}
