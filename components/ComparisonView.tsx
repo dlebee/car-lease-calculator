@@ -343,6 +343,31 @@ export default function ComparisonView() {
     }
   };
 
+  const handleDeleteCar = (carId: string) => {
+    const carToDelete = savedCars.cars.find(c => c.id === carId);
+    if (carToDelete && confirm(`Are you sure you want to delete ${getCarDisplayName(carToDelete)}?`)) {
+      const updatedCars = savedCars.cars.filter(c => c.id !== carId);
+      const updatedSelectedIds = new Set(selectedCarIds);
+      updatedSelectedIds.delete(carId);
+      
+      const updatedSavedCars: SavedCars = {
+        cars: updatedCars,
+        currentCarId: savedCars.currentCarId === carId ? (updatedCars.length > 0 ? updatedCars[0].id : null) : savedCars.currentCarId,
+      };
+      
+      setSavedCars(updatedSavedCars);
+      setSelectedCarIds(updatedSelectedIds);
+      saveToStorage(updatedSavedCars);
+      
+      // Clear overrides for deleted car
+      setCarOverrides(prev => {
+        const newOverrides = { ...prev };
+        delete newOverrides[carId];
+        return newOverrides;
+      });
+    }
+  };
+
   // VIN Lookup Function
   const handleVINLookup = async (carId: string, vin: string) => {
     if (!vin || vin.length !== 17) {
@@ -696,28 +721,30 @@ export default function ComparisonView() {
             const isSelected = selectedCarIds.has(car.id);
             const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
             return (
-              <label
+              <div
                 key={car.id}
-                className={`flex items-center gap-1 px-1.5 py-0.5 rounded border-2 cursor-pointer transition-colors ${
+                className={`flex items-center gap-1 px-1.5 py-0.5 rounded border-2 transition-colors ${
                   isSelected
                     ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
                     : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 hover:border-gray-400'
                 }`}
               >
-                <input
-                  type="checkbox"
-                  checked={isSelected}
-                  onChange={() => handleToggleCar(car.id)}
-                  className="w-3 h-3 text-blue-600 rounded focus:ring-blue-500"
-                  disabled={isSelected && selectedCarIds.size === 1}
-                />
-                <div className="flex flex-col">
-                  <span className="text-xs font-medium text-gray-900 dark:text-white">{getCarDisplayName(car)}</span>
-                  <span className="text-[10px] text-gray-600 dark:text-gray-400">
-                    {formatCurrency(payments.totalMonthlyPayment)}/mo
-                  </span>
-                </div>
-              </label>
+                <label className="flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => handleToggleCar(car.id)}
+                    className="w-3 h-3 text-blue-600 rounded focus:ring-blue-500"
+                    disabled={isSelected && selectedCarIds.size === 1}
+                  />
+                  <div className="flex flex-col">
+                    <span className="text-xs font-medium text-gray-900 dark:text-white">{getCarDisplayName(car)}</span>
+                    <span className="text-[10px] text-gray-600 dark:text-gray-400">
+                      {formatCurrency(payments.totalMonthlyPayment)}/mo
+                    </span>
+                  </div>
+                </label>
+              </div>
             );
           })}
         </div>
@@ -730,9 +757,22 @@ export default function ComparisonView() {
               <tr className="border-b-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800">
                 <th className="text-left p-1.5 font-semibold text-gray-900 dark:text-white sticky left-0 bg-white dark:bg-gray-800 z-30 border-r border-gray-200 dark:border-gray-700 text-xs">Car</th>
                 {sortedCars.map((car) => (
-                  <th key={car.id} className="text-center p-1.5 font-semibold text-gray-900 dark:text-white min-w-[120px] bg-white dark:bg-gray-800">
-                    <div className="font-bold text-xs">{getCarDisplayName(car)}</div>
-                    {car.dealership && <div className="text-[10px] text-gray-600 dark:text-gray-400 mt-0.5">{car.dealership}</div>}
+                  <th key={car.id} className="text-center p-1.5 font-semibold text-gray-900 dark:text-white min-w-[120px] bg-white dark:bg-gray-800 relative">
+                    <div className="flex items-center justify-center gap-1">
+                      <div className="flex-1">
+                        <div className="font-bold text-xs">{getCarDisplayName(car)}</div>
+                        {car.dealership && <div className="text-[10px] text-gray-600 dark:text-gray-400 mt-0.5">{car.dealership}</div>}
+                      </div>
+                      <button
+                        onClick={() => handleDeleteCar(car.id)}
+                        className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 transition-colors p-0.5"
+                        title="Delete car"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
                   </th>
                 ))}
               </tr>
