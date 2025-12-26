@@ -343,6 +343,28 @@ export default function ComparisonView() {
     }
   };
 
+  const handleSelectByMake = (make: string) => {
+    const carsFromMake = savedCars.cars.filter(car => car.carMake === make);
+    const allFromMakeSelected = carsFromMake.every(car => selectedCarIds.has(car.id));
+    
+    const newSelectedIds = new Set(selectedCarIds);
+    if (allFromMakeSelected) {
+      // Unselect all cars from this make
+      carsFromMake.forEach(car => newSelectedIds.delete(car.id));
+      // Ensure at least one car remains selected
+      if (newSelectedIds.size === 0 && savedCars.cars.length > 0) {
+        const firstOtherCar = savedCars.cars.find(c => c.carMake !== make);
+        if (firstOtherCar) {
+          newSelectedIds.add(firstOtherCar.id);
+        }
+      }
+    } else {
+      // Select all cars from this make (additive)
+      carsFromMake.forEach(car => newSelectedIds.add(car.id));
+    }
+    setSelectedCarIds(newSelectedIds);
+  };
+
   const handleDeleteCar = (carId: string) => {
     const carToDelete = savedCars.cars.find(c => c.id === carId);
     if (carToDelete && confirm(`Are you sure you want to delete ${getCarDisplayName(carToDelete)}?`)) {
@@ -716,37 +738,75 @@ export default function ComparisonView() {
             </button>
           </div>
         </div>
-        <div className="flex flex-wrap gap-1">
-          {savedCars.cars.map((car) => {
+        <div className="space-y-2">
+          {(() => {
+            // Group cars by make
+            const carsByMake = savedCars.cars.reduce((acc, car) => {
+              const make = car.carMake || 'Unknown';
+              if (!acc[make]) {
+                acc[make] = [];
+              }
+              acc[make].push(car);
+              return acc;
+            }, {} as Record<string, LeaseData[]>);
+
+            return Object.entries(carsByMake).map(([make, cars]) => {
+              const allFromMakeSelected = cars.every(car => selectedCarIds.has(car.id));
+              const someFromMakeSelected = cars.some(car => selectedCarIds.has(car.id));
+              
+              return (
+                <div key={make} className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleSelectByMake(make)}
+                      className={`text-xs font-semibold px-2 py-1 rounded transition-colors ${
+                        allFromMakeSelected
+                          ? 'bg-blue-600 text-white hover:bg-blue-700'
+                          : someFromMakeSelected
+                          ? 'bg-blue-200 dark:bg-blue-800 text-blue-800 dark:text-blue-200 hover:bg-blue-300 dark:hover:bg-blue-700'
+                          : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+                      }`}
+                      title={`Select all ${make} cars`}
+                    >
+                      {make} ({cars.length})
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1 ml-0">
+                    {cars.map((car) => {
             const isSelected = selectedCarIds.has(car.id);
             const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
             return (
-              <div
+                        <div
                 key={car.id}
-                className={`flex items-center gap-1 px-1.5 py-0.5 rounded border-2 transition-colors ${
+                          className={`flex items-center gap-1 px-1.5 py-0.5 rounded border-2 transition-colors ${
                   isSelected
                     ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
                     : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 hover:border-gray-400'
                 }`}
               >
-                <label className="flex items-center gap-1 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => handleToggleCar(car.id)}
-                    className="w-3 h-3 text-blue-600 rounded focus:ring-blue-500"
-                    disabled={isSelected && selectedCarIds.size === 1}
-                  />
-                  <div className="flex flex-col">
-                    <span className="text-xs font-medium text-gray-900 dark:text-white">{getCarDisplayName(car)}</span>
-                    <span className="text-[10px] text-gray-600 dark:text-gray-400">
-                      {formatCurrency(payments.totalMonthlyPayment)}/mo
-                    </span>
-                  </div>
-                </label>
-              </div>
+                          <label className="flex items-center gap-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => handleToggleCar(car.id)}
+                  className="w-3 h-3 text-blue-600 rounded focus:ring-blue-500"
+                  disabled={isSelected && selectedCarIds.size === 1}
+                />
+                <div className="flex flex-col">
+                  <span className="text-xs font-medium text-gray-900 dark:text-white">{getCarDisplayName(car)}</span>
+                  <span className="text-[10px] text-gray-600 dark:text-gray-400">
+                    {formatCurrency(payments.totalMonthlyPayment)}/mo
+                  </span>
+                </div>
+              </label>
+                        </div>
             );
           })}
+                  </div>
+                </div>
+              );
+            });
+          })()}
         </div>
       </div>
 
@@ -760,8 +820,8 @@ export default function ComparisonView() {
                   <th key={car.id} className="text-center p-1.5 font-semibold text-gray-900 dark:text-white min-w-[120px] bg-white dark:bg-gray-800 relative">
                     <div className="flex items-center justify-center gap-1">
                       <div className="flex-1">
-                        <div className="font-bold text-xs">{getCarDisplayName(car)}</div>
-                        {car.dealership && <div className="text-[10px] text-gray-600 dark:text-gray-400 mt-0.5">{car.dealership}</div>}
+                    <div className="font-bold text-xs">{getCarDisplayName(car)}</div>
+                    {car.dealership && <div className="text-[10px] text-gray-600 dark:text-gray-400 mt-0.5">{car.dealership}</div>}
                       </div>
                       <button
                         onClick={() => handleDeleteCar(car.id)}
