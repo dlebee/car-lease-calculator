@@ -947,15 +947,6 @@ export default function ComparisonView() {
                   <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">{formatCurrency(car.discountAmount || 0)}</td>
                 ))}
               </tr>
-              <tr className="border-b border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20">
-                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-blue-50 dark:bg-blue-900/20 z-10">Total Monthly Payment (with Tax)</td>
-                {sortedCars.map((car) => {
-                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
-                  return (
-                    <td key={car.id} className="p-1.5 text-center font-bold text-blue-600 dark:text-blue-400 text-xs">{formatCurrency(payments.totalMonthlyPayment)}</td>
-                  );
-                })}
-              </tr>
               <tr className="border-b border-gray-200 dark:border-gray-700">
                 <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">Residual %</td>
                 {sortedCars.map((car) => (
@@ -1050,6 +1041,15 @@ export default function ComparisonView() {
                   const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
                   return (
                     <td key={car.id} className="p-1.5 text-center text-gray-900 dark:text-white text-xs">{formatCurrency(payments.adjustedCapCostWithTax)}</td>
+                  );
+                })}
+              </tr>
+              <tr className="border-b border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20">
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-blue-50 dark:bg-blue-900/20 z-10">Total Monthly Payment (with Tax)</td>
+                {sortedCars.map((car) => {
+                  const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
+                  return (
+                    <td key={car.id} className="p-1.5 text-center font-bold text-blue-600 dark:text-blue-400 text-xs">{formatCurrency(payments.totalMonthlyPayment)}</td>
                   );
                 })}
               </tr>
