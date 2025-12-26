@@ -290,7 +290,32 @@ export default function ListingsPage() {
     return listing.vehicle.baseMsrp || listing.vehicle.baseInvoice || null;
   };
 
-  const handleAddToList = (listing: Listing) => {
+  const handleAddToList = (listing: Listing, useRetailPriceOnly: boolean = false) => {
+    // Determine MSRP and price
+    let msrp = listing.vehicle.baseMsrp || listing.vehicle.baseInvoice || 0;
+    let price = listing.retailListing?.price || 0;
+    
+    // If using retail price only, use retail price as both MSRP and price
+    if (useRetailPriceOnly) {
+      if (price === 0) {
+        alert('Cannot add this car: Listing price is not available.');
+        return;
+      }
+      msrp = price; // Use retail price as MSRP
+      // price stays as retailListing.price (same value)
+    } else {
+      // Normal validation
+      if (msrp === 0) {
+        alert('Cannot add this car: MSRP or invoice price is not available.');
+        return;
+      }
+      
+      if (price === 0) {
+        alert('Cannot add this car: Listing price is not available.');
+        return;
+      }
+    }
+    
     try {
       // Build notes with address and dealership info
       const notesParts: string[] = [];
@@ -334,9 +359,7 @@ export default function ListingsPage() {
       // Add raw JSON data to notes
       notesParts.push(`\n--- Raw JSON Data ---\n${JSON.stringify(listing, null, 2)}`);
       
-      // Determine MSRP and price
-      const msrp = listing.vehicle.baseMsrp || listing.vehicle.baseInvoice || 0;
-      const price = listing.retailListing?.price || 0;
+      // MSRP and price already validated above
       
       // Calculate discount if MSRP and price are available
       let discount = 0;
@@ -377,9 +400,6 @@ export default function ListingsPage() {
       
       // Save to storage
       saveToStorage(updatedCars);
-      
-      // Show success message
-      alert(`Added ${newCar.carYear} ${newCar.carMake} ${newCar.carModel} to your lease calculator!`);
       
       // Optionally redirect to calculator
       // window.location.href = '/';
@@ -812,12 +832,19 @@ export default function ListingsPage() {
                     </div>
                   </div>
                   
-                  <button
-                    onClick={() => setSelectedListing(listing)}
-                    className="w-full mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors"
-                  >
-                    View Details
-                  </button>
+                  <div className="mt-4 space-y-2">
+                    <button
+                      onClick={() => setSelectedListing(listing)}
+                      className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors"
+                    >
+                      View Details
+                    </button>
+                    {(!(listing.vehicle.baseMsrp || listing.vehicle.baseInvoice) || !listing.retailListing?.price) && (
+                      <p className="text-xs text-red-600 dark:text-red-400 text-center">
+                        Cannot add: Missing MSRP or price
+                      </p>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1061,22 +1088,48 @@ export default function ListingsPage() {
                 )}
               </div>
 
-              <div className="flex gap-4">
-                <button
-                  onClick={() => {
-                    handleAddToList(selectedListing);
-                    setSelectedListing(null);
-                  }}
-                  className="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition-colors"
-                >
-                  Add to Lease Calculator
-                </button>
-                <button
-                  onClick={() => setSelectedListing(null)}
-                  className="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-medium transition-colors"
-                >
-                  Close
-                </button>
+              <div className="flex flex-col gap-3">
+                <div className="flex gap-4">
+                  {(selectedListing.vehicle.baseMsrp || selectedListing.vehicle.baseInvoice) && selectedListing.retailListing?.price ? (
+                    <button
+                      onClick={() => {
+                        handleAddToList(selectedListing);
+                        setSelectedListing(null);
+                      }}
+                      className="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition-colors"
+                    >
+                      Add to Lease Calculator
+                    </button>
+                  ) : selectedListing.retailListing?.price ? (
+                    <button
+                      onClick={() => {
+                        handleAddToList(selectedListing, true);
+                        setSelectedListing(null);
+                      }}
+                      className="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition-colors"
+                    >
+                      Add with Retail Price Only
+                    </button>
+                  ) : (
+                    <button
+                      disabled
+                      className="flex-1 px-6 py-3 bg-gray-400 dark:bg-gray-600 text-gray-200 dark:text-gray-400 rounded-lg cursor-not-allowed font-medium"
+                    >
+                      Cannot Add (Missing Price)
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setSelectedListing(null)}
+                    className="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-medium transition-colors"
+                  >
+                    Close
+                  </button>
+                </div>
+                {!(selectedListing.vehicle.baseMsrp || selectedListing.vehicle.baseInvoice) && selectedListing.retailListing?.price && (
+                  <p className="text-xs text-yellow-600 dark:text-yellow-400 text-center">
+                    Note: Using retail price as MSRP (no discount applied)
+                  </p>
+                )}
               </div>
             </div>
           </div>
