@@ -16,6 +16,7 @@ export interface LeaseData {
   apr: number;
   marketFactor: number;
   leaseTerm: number;
+  milesPerYear: number; // Annual mileage allowance (e.g., 10000, 12000, 15000)
   ficoScore8: number; // FICO Score 8 (300-850)
   salesTaxPercent: number; // Sales tax percentage
   tagTitleFilingFees: number; // Tag/title/filing fees
@@ -47,11 +48,12 @@ export const createNewCar = (): LeaseData => ({
   discount: 0, // 0% discount = 100% of MSRP
   discountAmount: 0, // Discount amount in dollars
   residualPercent: 60,
-  apr: 0,
-  marketFactor: 0,
+  apr: 4, // Default 4% APR
+  marketFactor: 4 / 2400, // Default money factor (4% APR / 2400)
   leaseTerm: 36,
+  milesPerYear: 12000, // Default 12,000 miles per year
   ficoScore8: 0,
-  salesTaxPercent: 0,
+  salesTaxPercent: 6, // Default 6% sales tax
   tagTitleFilingFees: 0,
   handlingFees: 700, // Default handling fee (includes acquisition fee)
   otherFees: 0,
@@ -155,6 +157,9 @@ export const migrateCarData = (car: any): LeaseData => {
   }
   if (car.carYear === undefined) {
     updated = { ...updated, carYear: undefined };
+  }
+  if (car.milesPerYear === undefined) {
+    updated = { ...updated, milesPerYear: 12000 }; // Default to 12,000 miles per year
   }
   
   return updated as LeaseData;

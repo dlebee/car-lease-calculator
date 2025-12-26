@@ -67,12 +67,27 @@ export default function ComparisonView() {
   const formatCurrency = (amount: number) => 
     `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  // Calculate expected residual percentage based on lease term
+  // Calculate expected residual percentage based on lease term and miles per year
   // Formula: Base 60% for 36 months, adjust by 0.5% per month difference
-  const getExpectedResidualPercent = (leaseTerm: number): number => {
+  // Adjusted for miles: 10k = +2.5%, 12k = baseline, 15k = -2.5%, 18k+ = -4.5%
+  const getExpectedResidualPercent = (leaseTerm: number, milesPerYear: number = 12000): number => {
     const baseResidual = 60;
     const termAdjustment = (leaseTerm - 36) * 0.5;
-    return Math.max(0, Math.min(100, baseResidual - termAdjustment));
+    let residual = Math.max(0, Math.min(100, baseResidual - termAdjustment));
+    
+    // Adjust for miles per year (12,000 is baseline)
+    if (milesPerYear <= 7500) {
+      // Very low mileage = higher residual (+3-4%)
+      residual += 3.5;
+    } else if (milesPerYear <= 10000) {
+      // Lower mileage = higher residual (+2-3%)
+      residual += 2.5;
+    } else if (milesPerYear <= 12000) {
+      // Standard mileage = baseline (0%)
+      // No adjustment
+    }
+    
+    return Math.max(0, Math.min(100, residual));
   };
 
   // Helper function to get payments with optional overrides
@@ -450,6 +465,7 @@ export default function ComparisonView() {
         return payments.depreciation;
       }, format: 'currency' },
       { label: 'Lease Term (months)', getValue: (car: LeaseData) => car.leaseTerm },
+      { label: 'Miles Per Year', getValue: (car: LeaseData) => car.milesPerYear || 12000 },
       { label: 'APR %', getValue: (car: LeaseData) => {
         const payments = getCarPaymentsWithOverride(car, overrideDownPaymentValue, getCarOverrides(car.id));
         return payments.currentApr;
@@ -838,9 +854,9 @@ export default function ComparisonView() {
                 ))}
               </tr>
               <tr className="border-b border-gray-200 dark:border-gray-700 bg-green-50 dark:bg-green-900/20">
-                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-green-50 dark:bg-green-900/20 z-10">Expected Residual %<br/><span className="text-[10px] text-gray-500 dark:text-gray-400">(Based on lease term)</span></td>
+                <td className="p-3 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-green-50 dark:bg-green-900/20 z-10">Expected Residual %<br/><span className="text-[10px] text-gray-500 dark:text-gray-400">(Based on term & miles/year)</span></td>
                 {sortedCars.map((car) => {
-                  const expectedResidual = getExpectedResidualPercent(car.leaseTerm);
+                  const expectedResidual = getExpectedResidualPercent(car.leaseTerm, car.milesPerYear || 12000);
                   const actualResidual = car.residualPercent;
                   const difference = actualResidual - expectedResidual;
                   const isGood = difference >= -2; // Within 2% is considered good
@@ -857,7 +873,7 @@ export default function ComparisonView() {
                           {difference >= 0 ? `+${difference.toFixed(1)}%` : `${difference.toFixed(1)}%`}
                         </div>
                         <div className="text-[9px] text-gray-500 dark:text-gray-400 mt-0.5">
-                          ({car.leaseTerm}mo term)
+                          ({car.leaseTerm}mo, {(car.milesPerYear || 12000).toLocaleString()}/yr)
                         </div>
                       </div>
                     </td>
@@ -1462,7 +1478,7 @@ export default function ComparisonView() {
                 </p>
                 {sortedCars.length > 0 && (() => {
                   const firstCar = sortedCars[0];
-                  const expectedResidual = getExpectedResidualPercent(firstCar.leaseTerm);
+                  const expectedResidual = getExpectedResidualPercent(firstCar.leaseTerm, firstCar.milesPerYear || 12000);
                   const minResidual = Math.max(0, expectedResidual - 2);
                   const maxResidual = Math.min(100, expectedResidual + 2);
                   return (

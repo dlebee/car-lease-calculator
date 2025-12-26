@@ -28,6 +28,7 @@ export default function LeaseCalculator() {
   const [vinSuccess, setVinSuccess] = useState<string | null>(null);
   const [vinData, setVinData] = useState<string>('');
   const [showDealershipModal, setShowDealershipModal] = useState(false);
+  const [residualAmountInput, setResidualAmountInput] = useState<string>('');
 
 
   const [expandedSteps, setExpandedSteps] = useState({
@@ -1064,16 +1065,31 @@ export default function LeaseCalculator() {
     });
   };
 
-  // Calculate technical residual value based on term length
+  // Calculate technical residual value based on term length and miles per year
   const getTechnicalResidualValue = (): number => {
     // Technical residual = (60 - (term - 36) * 0.5)%
     // This gives: 36mo = 60%, 39mo = 58.5%, 48mo = 54%, etc.
     const baseResidual = 60;
     const termAdjustment = (data.leaseTerm - 36) * 0.5;
-    return Math.max(0, Math.min(100, baseResidual - termAdjustment));
+    let residual = Math.max(0, Math.min(100, baseResidual - termAdjustment));
+    
+    // Adjust for miles per year (12,000 is baseline)
+    const milesPerYear = data.milesPerYear || 12000;
+    if (milesPerYear <= 7500) {
+      // Very low mileage = higher residual (+3-4%)
+      residual += 3.5;
+    } else if (milesPerYear <= 10000) {
+      // Lower mileage = higher residual (+2-3%)
+      residual += 2.5;
+    } else if (milesPerYear <= 12000) {
+      // Standard mileage = baseline (0%)
+      // No adjustment
+    }
+    
+    return Math.max(0, Math.min(100, residual));
   };
 
-  // Calculate ideal range based on term length
+  // Calculate ideal range based on term length and miles per year
   const getIdealResidualRange = (): { min: number; max: number } => {
     const technical = getTechnicalResidualValue();
     // Ideal range is ±2% around technical value
@@ -1518,10 +1534,26 @@ export default function LeaseCalculator() {
               <option value={24}>24 months</option>
               <option value={36}>36 months</option>
               <option value={39}>39 months</option>
-              <option value={48}>48 months</option>
             </select>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
               Technical Residual: {getTechnicalResidualValue().toFixed(1)}% | Ideal Range: {getIdealResidualRange().min.toFixed(1)}% - {getIdealResidualRange().max.toFixed(1)}%
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Miles Per Year
+            </label>
+            <select
+              value={data.milesPerYear || 12000}
+              onChange={(e) => handleInputChange('milesPerYear', parseInt(e.target.value))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+            >
+              <option value={7500}>7,500 miles/year</option>
+              <option value={10000}>10,000 miles/year</option>
+              <option value={12000}>12,000 miles/year (Standard)</option>
+            </select>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              Lower mileage = higher residual value. Higher mileage = lower residual value.
             </p>
           </div>
           <div>
@@ -1877,22 +1909,62 @@ export default function LeaseCalculator() {
         {expandedSteps.step2 && (
           <div className="px-6 pb-6">
             <div className="mb-4">
-              <div>
-                <div className="flex items-center gap-4 mb-2">
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     Residual Value Percentage:
                   </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.1"
-                    value={data.residualPercent}
-                    onChange={(e) => handleInputChange('residualPercent', parseFloat(e.target.value) || 0)}
-                    className="w-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                  />
-                  <span className="text-sm text-gray-700 dark:text-gray-300">%</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={data.residualPercent}
+                      onChange={(e) => {
+                        const percent = parseFloat(e.target.value) || 0;
+                        handleInputChange('residualPercent', percent);
+                      }}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                    />
+                    <span className="text-sm text-gray-700 dark:text-gray-300">%</span>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    = ${((data.msrp * data.residualPercent) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Residual Value Amount:
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-700 dark:text-gray-300">$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={residualAmountInput || ((data.msrp * data.residualPercent) / 100).toFixed(2)}
+                      onChange={(e) => {
+                        const inputValue = e.target.value;
+                        setResidualAmountInput(inputValue);
+                        const amount = parseFloat(inputValue) || 0;
+                        if (data.msrp > 0 && amount >= 0) {
+                          const percent = (amount / data.msrp) * 100;
+                          handleInputChange('residualPercent', Math.max(0, Math.min(100, percent)));
+                        }
+                      }}
+                      onBlur={() => {
+                        setResidualAmountInput('');
+                      }}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    = {data.msrp > 0 ? ((data.msrp * data.residualPercent) / 100 / data.msrp * 100).toFixed(1) : '0'}%
+                  </p>
+                </div>
+              </div>
+              <div>
                 <input
                   type="range"
                   min="0"

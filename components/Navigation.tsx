@@ -29,6 +29,16 @@ export default function Navigation() {
         >
           Comparison
         </Link>
+        <Link
+          href="/listings"
+          className={`px-6 py-2 rounded-lg font-medium transition-colors ${
+            pathname === '/listings'
+              ? 'bg-blue-600 text-white'
+              : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+          }`}
+        >
+          Listings
+        </Link>
       </div>
     </div>
   );
